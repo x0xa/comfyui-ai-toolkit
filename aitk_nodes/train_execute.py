@@ -6,7 +6,11 @@ import time
 import glob
 import yaml
 
-AITK_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ai-toolkit")
+_PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PKG_ROOT not in sys.path:
+    sys.path.insert(0, _PKG_ROOT)
+
+AITK_DIR = os.path.join(_PKG_ROOT, "ai-toolkit")
 
 
 class AIToolkitTrainExecute:
