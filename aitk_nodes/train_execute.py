@@ -95,7 +95,7 @@ class AIToolkitTrainExecute:
 
         # Run auto-captioning if configured
         if caption_config and caption_config.get("enabled", False):
-            from nodes.caption_config import AIToolkitCaptionConfig
+            from aitk_nodes.caption_config import AIToolkitCaptionConfig
             for ds in datasets:
                 folder = ds.get("folder_path", "")
                 if folder:
