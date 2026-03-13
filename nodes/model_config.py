@@ -7,9 +7,9 @@ class AIToolkitModelConfig:
     RETURN_NAMES = ("model_config",)
     FUNCTION = "build"
 
-    # Supported architectures for Flux.2 Klein 9B and ZImage Turbo
     ARCHITECTURES = [
         "flux2_klein_9b",
+        "flux2_klein_4b",
         "zimage",
     ]
 
@@ -19,26 +19,34 @@ class AIToolkitModelConfig:
             "required": {
                 "name_or_path": ("STRING", {
                     "default": "",
-                    "tooltip": "HuggingFace model name or local path to model weights",
+                    "tooltip": "Local path to transformer weights (e.g. /models/flux-2-klein-base-9b.safetensors or folder containing it)",
                 }),
                 "arch": (cls.ARCHITECTURES, {
                     "default": "flux2_klein_9b",
-                    "tooltip": "Model architecture: flux2_klein_9b or zimage",
+                    "tooltip": "Model architecture",
                 }),
+                "te_name_or_path": ("STRING", {
+                    "default": "",
+                    "tooltip": "Local path to text encoder (e.g. /models/Qwen3-8B or /models/Qwen3-8B-FP8)",
+                }),
+                "vae_path": ("STRING", {
+                    "default": "",
+                    "tooltip": "Local path to VAE weights (e.g. /models/ae.safetensors)",
+                }),
+            },
+            "optional": {
                 "quantize": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Quantize base model to 8-bit for lower VRAM usage",
+                    "tooltip": "Quantize transformer to 8-bit for lower VRAM usage",
                 }),
                 "quantize_te": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Quantize text encoder separately",
+                    "tooltip": "Quantize text encoder (disable if already using fp8 weights)",
                 }),
                 "low_vram": ("BOOLEAN", {
                     "default": False,
                     "tooltip": "Enable low VRAM mode (offloads to CPU, slower)",
                 }),
-            },
-            "optional": {
                 "qtype": ("STRING", {
                     "default": "qfloat8",
                     "tooltip": "Quantization type for transformer (qfloat8, qint8, qint4, etc.)",
@@ -47,13 +55,9 @@ class AIToolkitModelConfig:
                     "default": "qfloat8",
                     "tooltip": "Quantization type for text encoder",
                 }),
-                "vae_path": ("STRING", {
-                    "default": "",
-                    "tooltip": "Optional separate VAE path (leave empty to use default)",
-                }),
                 "extras_name_or_path": ("STRING", {
                     "default": "",
-                    "tooltip": "Separate path for text encoder/tokenizer/VAE (ZImage). Defaults to name_or_path",
+                    "tooltip": "Separate path for auxiliary components (ZImage tokenizer/TE/VAE). Defaults to name_or_path",
                 }),
                 "assistant_lora_path": ("STRING", {
                     "default": "",
@@ -84,12 +88,13 @@ class AIToolkitModelConfig:
         self,
         name_or_path: str,
         arch: str,
-        quantize: bool,
-        quantize_te: bool,
-        low_vram: bool,
+        te_name_or_path: str,
+        vae_path: str,
+        quantize: bool = True,
+        quantize_te: bool = False,
+        low_vram: bool = False,
         qtype: str = "qfloat8",
         qtype_te: str = "qfloat8",
-        vae_path: str = "",
         extras_name_or_path: str = "",
         assistant_lora_path: str = "",
         layer_offloading: bool = False,
@@ -102,6 +107,12 @@ class AIToolkitModelConfig:
             "quantize": quantize,
         }
 
+        if te_name_or_path:
+            config["te_name_or_path"] = te_name_or_path
+
+        if vae_path:
+            config["vae_path"] = vae_path
+
         if quantize_te:
             config["quantize_te"] = True
 
@@ -113,9 +124,6 @@ class AIToolkitModelConfig:
 
         if qtype_te and qtype_te != "qfloat8":
             config["qtype_te"] = qtype_te
-
-        if vae_path:
-            config["vae_path"] = vae_path
 
         if extras_name_or_path:
             config["extras_name_or_path"] = extras_name_or_path

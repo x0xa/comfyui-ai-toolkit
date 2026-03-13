@@ -203,12 +203,19 @@ class ZImageModel(BaseModel):
         flush()
 
         self.print_and_status_update("Text Encoder")
-        tokenizer = AutoTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype
-        )
-        text_encoder = Qwen3ForCausalLM.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype
-        )
+        # Allow overriding TE path via config (te_name_or_path)
+        te_path = getattr(self.model_config, 'te_name_or_path', None)
+        if te_path:
+            # Direct path to TE folder (no subfolder)
+            tokenizer = AutoTokenizer.from_pretrained(te_path, torch_dtype=dtype)
+            text_encoder = Qwen3ForCausalLM.from_pretrained(te_path, torch_dtype=dtype)
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(
+                base_model_path, subfolder="tokenizer", torch_dtype=dtype
+            )
+            text_encoder = Qwen3ForCausalLM.from_pretrained(
+                base_model_path, subfolder="text_encoder", torch_dtype=dtype
+            )
 
         if (
             self.model_config.layer_offloading
@@ -230,9 +237,14 @@ class ZImageModel(BaseModel):
             flush()
 
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKL.from_pretrained(
-            base_model_path, subfolder="vae", torch_dtype=dtype
-        )
+        # Allow overriding VAE path via config (vae_path)
+        vae_override = getattr(self.model_config, 'vae_path', None)
+        if vae_override:
+            vae = AutoencoderKL.from_pretrained(vae_override, torch_dtype=dtype)
+        else:
+            vae = AutoencoderKL.from_pretrained(
+                base_model_path, subfolder="vae", torch_dtype=dtype
+            )
 
         self.noise_scheduler = ZImageModel.get_train_scheduler()
 
