@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-ai-toolkit"
+version = "0.1.0"
+description = "ComfyUI nodes for LoRA training via ai-toolkit"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml",
+    "Pillow",
+    "numpy",
+    "torch",
+]
+
+[tool.setuptools]
+packages = ["nodes", "utils"]

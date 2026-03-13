@@ -1,0 +1,8 @@
+# Core dependencies (most should already be in ComfyUI environment)
+pyyaml
+Pillow
+numpy
+torch
+
+# ai-toolkit has its own requirements - install separately:
+# pip install -r ai-toolkit/requirements.txt
