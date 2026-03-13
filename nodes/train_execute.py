@@ -78,10 +78,6 @@ class AIToolkitTrainExecute:
         except ImportError:
             has_comfy = False
 
-        # Use path-based import to avoid collision with ComfyUI's own modules
-        _pkg_root = os.path.dirname(os.path.dirname(__file__))
-        if _pkg_root not in sys.path:
-            sys.path.insert(0, _pkg_root)
         from utils.config_builder import build_config
         from utils.process_manager import AIToolkitProcess
         from utils.sample_watcher import SampleWatcher, load_images_as_tensor
@@ -99,7 +95,7 @@ class AIToolkitTrainExecute:
 
         # Run auto-captioning if configured
         if caption_config and caption_config.get("enabled", False):
-            from .caption_config import AIToolkitCaptionConfig
+            from nodes.caption_config import AIToolkitCaptionConfig
             for ds in datasets:
                 folder = ds.get("folder_path", "")
                 if folder:
