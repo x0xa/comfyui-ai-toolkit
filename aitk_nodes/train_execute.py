@@ -17,9 +17,11 @@ def _load_pkg_module(rel_path):
     Avoids name collisions with other packages that have common names
     like 'utils' (e.g. comfy.utils).
     """
+    mod_name = f"comfyui_aitk.{rel_path}"
+    if mod_name in sys.modules:
+        return sys.modules[mod_name]
     parts = rel_path.replace(".", os.sep)
     fpath = os.path.join(_PKG_ROOT, parts + ".py")
-    mod_name = f"comfyui_aitk.{rel_path}"
     spec = importlib.util.spec_from_file_location(mod_name, fpath)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[mod_name] = mod
@@ -233,10 +235,22 @@ class AIToolkitTrainExecute:
         exit_code = process.wait(timeout=30)
 
         if exit_code != 0:
-            log_tail = process.full_output[-2000:] if process.full_output else ""
+            full = process.full_output or ""
+            # Extract traceback/error lines if present
+            error_lines = []
+            in_traceback = False
+            for line in full.split("\n"):
+                if "Traceback" in line or "Error" in line or "Exception" in line:
+                    in_traceback = True
+                if in_traceback:
+                    error_lines.append(line)
+            if error_lines:
+                error_msg = "\n".join(error_lines[-80:])
+            else:
+                error_msg = full[-8000:]
             raise RuntimeError(
                 f"Training failed with exit code {exit_code}.\n"
-                f"Last output:\n{log_tail}"
+                f"Last output:\n{error_msg}"
             )
 
         # Find the final LoRA checkpoint
