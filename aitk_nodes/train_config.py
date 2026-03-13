@@ -39,11 +39,11 @@ class AIToolkitTrainConfig:
         return {
             "required": {
                 "steps": ("INT", {
-                    "default": 2000,
+                    "default": 3000,
                     "min": 1,
                     "max": 100000,
                     "step": 1,
-                    "tooltip": "Total number of training steps (500-4000 typical)",
+                    "tooltip": "Total number of training steps (500-4000 typical, 3000+ recommended for Klein 9B)",
                 }),
                 "batch_size": ("INT", {
                     "default": 1,
@@ -124,7 +124,7 @@ class AIToolkitTrainConfig:
                 }),
                 "linear_timesteps": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Use vell curved weighting (experimental, may improve results)",
+                    "tooltip": "Use bell-curved timestep weighting (experimental, may improve results)",
                 }),
                 "unload_text_encoder": ("BOOLEAN", {
                     "default": False,

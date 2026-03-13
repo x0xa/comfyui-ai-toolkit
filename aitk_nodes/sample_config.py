@@ -57,11 +57,11 @@ class AIToolkitSampleConfig:
                     "tooltip": "CFG guidance scale for sampling",
                 }),
                 "sample_steps": ("INT", {
-                    "default": 20,
+                    "default": 50,
                     "min": 1,
                     "max": 100,
                     "step": 1,
-                    "tooltip": "Number of inference steps for sample generation",
+                    "tooltip": "Number of inference steps for sample generation (50 recommended for Klein Base)",
                 }),
             },
             "optional": {
@@ -85,7 +85,7 @@ class AIToolkitSampleConfig:
         prompts: str,
         seed: int,
         guidance_scale: float,
-        sample_steps: int,
+        sample_steps: int = 50,
         neg: str = "",
         walk_seed: bool = True,
     ):
