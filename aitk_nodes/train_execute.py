@@ -5,12 +5,26 @@ import sys
 import time
 import glob
 import yaml
+import importlib.util
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _PKG_ROOT not in sys.path:
-    sys.path.insert(0, _PKG_ROOT)
-
 AITK_DIR = os.path.join(_PKG_ROOT, "ai-toolkit")
+
+
+def _load_pkg_module(rel_path):
+    """Load a module by file path relative to the package root.
+
+    Avoids name collisions with other packages that have common names
+    like 'utils' (e.g. comfy.utils).
+    """
+    parts = rel_path.replace(".", os.sep)
+    fpath = os.path.join(_PKG_ROOT, parts + ".py")
+    mod_name = f"comfyui_aitk.{rel_path}"
+    spec = importlib.util.spec_from_file_location(mod_name, fpath)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 class AIToolkitTrainExecute:
@@ -82,9 +96,10 @@ class AIToolkitTrainExecute:
         except ImportError:
             has_comfy = False
 
-        from utils.config_builder import build_config
-        from utils.process_manager import AIToolkitProcess
-        from utils.sample_watcher import SampleWatcher, load_images_as_tensor
+        build_config = _load_pkg_module("utils.config_builder").build_config
+        AIToolkitProcess = _load_pkg_module("utils.process_manager").AIToolkitProcess
+        _sw = _load_pkg_module("utils.sample_watcher")
+        SampleWatcher, load_images_as_tensor = _sw.SampleWatcher, _sw.load_images_as_tensor
 
         # Free VRAM before training
         if has_comfy:
