@@ -1,0 +1,266 @@
+{
+  "last_node_id": 8,
+  "last_link_id": 7,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "AIToolkitModelConfig",
+      "pos": [100, 100],
+      "size": [400, 350],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "model_config",
+          "type": "AITK_MODEL_CONFIG",
+          "links": [1],
+          "slot_index": 0
+        }
+      ],
+      "properties": { "Node name for S&R": "AIToolkitModelConfig" },
+      "widgets_values": [
+        "/path/to/flux-2-klein-base-9b.safetensors",
+        "flux2_klein_9b",
+        "/path/to/Qwen3-8B-FP8",
+        "/path/to/ae.safetensors",
+        true,
+        false,
+        false,
+        "qfloat8",
+        "qfloat8",
+        "",
+        "",
+        false,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "id": 2,
+      "type": "AIToolkitNetworkConfig",
+      "pos": [100, 500],
+      "size": [350, 200],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "network_config",
+          "type": "AITK_NETWORK_CONFIG",
+          "links": [2],
+          "slot_index": 0
+        }
+      ],
+      "properties": { "Node name for S&R": "AIToolkitNetworkConfig" },
+      "widgets_values": [
+        "lora",
+        16,
+        16,
+        0,
+        0,
+        0.0,
+        ""
+      ]
+    },
+    {
+      "id": 3,
+      "type": "AIToolkitTrainConfig",
+      "pos": [100, 750],
+      "size": [400, 550],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "train_config",
+          "type": "AITK_TRAIN_CONFIG",
+          "links": [3],
+          "slot_index": 0
+        }
+      ],
+      "properties": { "Node name for S&R": "AIToolkitTrainConfig" },
+      "widgets_values": [
+        2000,
+        1,
+        0.0001,
+        "adamw8bit",
+        "flowmatch",
+        "bf16",
+        true,
+        true,
+        false,
+        1,
+        "constant",
+        "sigmoid",
+        0.0,
+        0.0,
+        false,
+        false,
+        false,
+        false,
+        "",
+        true,
+        0.99
+      ]
+    },
+    {
+      "id": 4,
+      "type": "AIToolkitDatasetConfig",
+      "pos": [550, 100],
+      "size": [350, 220],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "dataset_config",
+          "type": "AITK_DATASET_CONFIG",
+          "links": [4],
+          "slot_index": 0
+        }
+      ],
+      "properties": { "Node name for S&R": "AIToolkitDatasetConfig" },
+      "widgets_values": [
+        "/path/to/images/folder",
+        "txt",
+        "512, 768, 1024",
+        0.05,
+        false,
+        true,
+        ""
+      ]
+    },
+    {
+      "id": 5,
+      "type": "AIToolkitSaveConfig",
+      "pos": [550, 380],
+      "size": [350, 200],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "save_config",
+          "type": "AITK_SAVE_CONFIG",
+          "links": [5],
+          "slot_index": 0
+        }
+      ],
+      "properties": { "Node name for S&R": "AIToolkitSaveConfig" },
+      "widgets_values": [
+        "float16",
+        250,
+        4,
+        false,
+        "",
+        true,
+        ""
+      ]
+    },
+    {
+      "id": 6,
+      "type": "AIToolkitSampleConfig",
+      "pos": [550, 630],
+      "size": [400, 350],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "sample_config",
+          "type": "AITK_SAMPLE_CONFIG",
+          "links": [6],
+          "slot_index": 0
+        }
+      ],
+      "properties": { "Node name for S&R": "AIToolkitSampleConfig" },
+      "widgets_values": [
+        "flowmatch",
+        250,
+        1024,
+        1024,
+        "a woman holding a coffee cup, in a beanie, sitting at a cafe\na bear building a log cabin in the snow covered mountains\nphoto of a man, white background, medium shot, modeling clothing, studio lighting",
+        42,
+        4.0,
+        20,
+        "",
+        true
+      ]
+    },
+    {
+      "id": 7,
+      "type": "AIToolkitEmbeddingConfig",
+      "pos": [550, 1030],
+      "size": [350, 100],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "embedding_config",
+          "type": "AITK_EMBEDDING_CONFIG",
+          "links": [7],
+          "slot_index": 0
+        }
+      ],
+      "properties": { "Node name for S&R": "AIToolkitEmbeddingConfig" },
+      "widgets_values": [
+        "p3r5on"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "AIToolkitTrainExecute",
+      "pos": [1050, 300],
+      "size": [350, 350],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        { "name": "model_config", "type": "AITK_MODEL_CONFIG", "link": 1 },
+        { "name": "network_config", "type": "AITK_NETWORK_CONFIG", "link": 2 },
+        { "name": "train_config", "type": "AITK_TRAIN_CONFIG", "link": 3 },
+        { "name": "dataset_config", "type": "AITK_DATASET_CONFIG", "link": 4 },
+        { "name": "save_config", "type": "AITK_SAVE_CONFIG", "link": 5 },
+        { "name": "job_name", "type": "STRING", "widget": { "name": "job_name" } },
+        { "name": "training_folder", "type": "STRING", "widget": { "name": "training_folder" } },
+        { "name": "device", "type": "COMBO", "widget": { "name": "device" } },
+        { "name": "sample_config", "type": "AITK_SAMPLE_CONFIG", "link": 6 },
+        { "name": "embedding_config", "type": "AITK_EMBEDDING_CONFIG", "link": 7 },
+        { "name": "caption_config", "type": "AITK_CAPTION_CONFIG", "link": null },
+        { "name": "dataset_list", "type": "AITK_DATASET_LIST", "link": null }
+      ],
+      "outputs": [
+        { "name": "lora_path", "type": "STRING", "links": [], "slot_index": 0 },
+        { "name": "sample_images", "type": "IMAGE", "links": [], "slot_index": 1 },
+        { "name": "training_log", "type": "STRING", "links": [], "slot_index": 2 },
+        { "name": "final_loss", "type": "FLOAT", "links": [], "slot_index": 3 }
+      ],
+      "properties": { "Node name for S&R": "AIToolkitTrainExecute" },
+      "widgets_values": [
+        "my_flux2_lora_v1",
+        "/output/lora_training",
+        "cuda:0"
+      ]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 8, 0, "AITK_MODEL_CONFIG"],
+    [2, 2, 0, 8, 1, "AITK_NETWORK_CONFIG"],
+    [3, 3, 0, 8, 2, "AITK_TRAIN_CONFIG"],
+    [4, 4, 0, 8, 3, "AITK_DATASET_CONFIG"],
+    [5, 5, 0, 8, 4, "AITK_SAVE_CONFIG"],
+    [6, 6, 0, 8, 8, "AITK_SAMPLE_CONFIG"],
+    [7, 7, 0, 8, 9, "AITK_EMBEDDING_CONFIG"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.7,
+      "offset": [0, 0]
+    }
+  },
+  "version": 0.4
+}
