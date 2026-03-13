@@ -1,7 +1,7 @@
 """Auto-captioning configuration node.
 
-Runs captioning as a pre-step before training using ai-toolkit's
-built-in captioning capabilities.
+Runs captioning as a pre-step before training using Florence-2,
+the same model used in ai-toolkit's built-in UI.
 """
 
 import os
@@ -15,30 +15,16 @@ class AIToolkitCaptionConfig:
     RETURN_NAMES = ("caption_config",)
     FUNCTION = "build"
 
-    CAPTION_MODELS = [
-        "florence2",
-        "joy-caption",
-    ]
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "enabled": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Enable auto-captioning before training",
-                }),
-                "model": (cls.CAPTION_MODELS, {
-                    "default": "florence2",
-                    "tooltip": "Captioning model to use",
+                    "tooltip": "Enable auto-captioning with Florence-2 before training",
                 }),
             },
             "optional": {
-                "prompt": ("STRING", {
-                    "default": "Describe this image in detail",
-                    "multiline": True,
-                    "tooltip": "Prompt/instruction for the captioning model",
-                }),
                 "caption_ext": ("STRING", {
                     "default": "txt",
                     "tooltip": "File extension for generated captions",
@@ -46,6 +32,10 @@ class AIToolkitCaptionConfig:
                 "overwrite": ("BOOLEAN", {
                     "default": False,
                     "tooltip": "Overwrite existing caption files",
+                }),
+                "append_trigger": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Append [trigger] token to generated captions",
                 }),
                 "prefix": ("STRING", {
                     "default": "",
@@ -61,19 +51,17 @@ class AIToolkitCaptionConfig:
     def build(
         self,
         enabled: bool,
-        model: str,
-        prompt: str = "Describe this image in detail",
         caption_ext: str = "txt",
         overwrite: bool = False,
+        append_trigger: bool = True,
         prefix: str = "",
         suffix: str = "",
     ):
         config = {
             "enabled": enabled,
-            "model": model,
-            "prompt": prompt,
             "caption_ext": caption_ext,
             "overwrite": overwrite,
+            "append_trigger": append_trigger,
         }
         if prefix:
             config["prefix"] = prefix
@@ -88,7 +76,7 @@ class AIToolkitCaptionConfig:
         dataset_folder: str,
         ai_toolkit_dir: str,
     ) -> tuple[bool, str]:
-        """Run auto-captioning on the dataset folder.
+        """Run Florence-2 auto-captioning on images in the dataset folder.
 
         Returns (success, message).
         """
@@ -98,44 +86,89 @@ class AIToolkitCaptionConfig:
         if not os.path.isdir(dataset_folder):
             return False, f"Dataset folder not found: {dataset_folder}"
 
-        # Build captioning script command
-        # ai-toolkit uses a captioning script that can be invoked
         caption_ext = caption_config.get("caption_ext", "txt")
         overwrite = caption_config.get("overwrite", False)
+        append_trigger = caption_config.get("append_trigger", True)
         prefix = caption_config.get("prefix", "")
         suffix = caption_config.get("suffix", "")
-        model = caption_config.get("model", "florence2")
-        prompt = caption_config.get("prompt", "Describe this image in detail")
 
-        # Generate captions using a simple Python script that uses ai-toolkit internals
+        # Florence-2 captioning script based on ai-toolkit's flux_train_ui.py
         script = f"""
-import sys
-import os
-sys.path.insert(0, {ai_toolkit_dir!r})
-os.chdir({ai_toolkit_dir!r})
+import os, glob, torch
+from PIL import Image
+from transformers import AutoModelForCausalLM, AutoProcessor
 
-from toolkit.captioning.caption_job import CaptionJob
+dataset_folder = {dataset_folder!r}
+caption_ext = {caption_ext!r}
+overwrite = {overwrite!r}
+append_trigger = {append_trigger!r}
+prefix = {prefix!r}
+suffix = {suffix!r}
 
-config = {{
-    "job": "caption",
-    "config": {{
-        "process": [{{
-            "type": "caption",
-            "model": {model!r},
-            "folder_path": {dataset_folder!r},
-            "caption_ext": {caption_ext!r},
-            "overwrite": {overwrite!r},
-            "prompt": {prompt!r},
-            "prefix": {prefix!r},
-            "suffix": {suffix!r},
-        }}]
-    }}
-}}
+device = "cuda" if torch.cuda.is_available() else "cpu"
+torch_dtype = torch.float16
 
-job = CaptionJob(config)
-job.run()
-job.cleanup()
-print("CAPTIONING_COMPLETE")
+print("Loading Florence-2 model...")
+model = AutoModelForCausalLM.from_pretrained(
+    "multimodalart/Florence-2-large-no-flash-attn",
+    torch_dtype=torch_dtype, trust_remote_code=True
+).to(device)
+processor = AutoProcessor.from_pretrained(
+    "multimodalart/Florence-2-large-no-flash-attn",
+    trust_remote_code=True
+)
+
+extensions = (".jpg", ".jpeg", ".png", ".webp")
+images = []
+for ext in extensions:
+    images.extend(glob.glob(os.path.join(dataset_folder, f"*{{ext}}")))
+images.sort()
+
+print(f"Found {{len(images)}} images to caption")
+captioned = 0
+
+for img_path in images:
+    base = os.path.splitext(img_path)[0]
+    caption_path = f"{{base}}.{{caption_ext}}"
+
+    if os.path.exists(caption_path) and not overwrite:
+        print(f"  Skip (exists): {{os.path.basename(img_path)}}")
+        continue
+
+    image = Image.open(img_path).convert("RGB")
+    prompt = "<DETAILED_CAPTION>"
+    inputs = processor(text=prompt, images=image, return_tensors="pt").to(device, torch_dtype)
+
+    generated_ids = model.generate(
+        input_ids=inputs["input_ids"],
+        pixel_values=inputs["pixel_values"],
+        max_new_tokens=1024,
+        num_beams=3,
+    )
+    generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+    parsed = processor.post_process_generation(
+        generated_text, task=prompt, image_size=(image.width, image.height)
+    )
+    caption_text = parsed["<DETAILED_CAPTION>"].replace("The image shows ", "")
+
+    if prefix:
+        caption_text = f"{{prefix}} {{caption_text}}"
+    if suffix:
+        caption_text = f"{{caption_text}} {{suffix}}"
+    if append_trigger:
+        caption_text = f"{{caption_text}} [trigger]"
+
+    with open(caption_path, "w", encoding="utf-8") as f:
+        f.write(caption_text)
+
+    captioned += 1
+    print(f"  Captioned: {{os.path.basename(img_path)}}")
+
+model.to("cpu")
+del model, processor
+torch.cuda.empty_cache()
+
+print(f"CAPTIONING_COMPLETE: {{captioned}} images captioned")
 """
 
         env = os.environ.copy()
