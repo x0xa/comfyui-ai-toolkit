@@ -149,6 +149,12 @@ class Flux2Model(BaseModel):
 
         transformer_state_dict = load_file(transformer_path, device="cpu")
 
+        # Filter out FP8 quantization scale keys (input_scale, weight_scale)
+        # so that FP8 checkpoints can be loaded into bf16/fp16 models
+        scale_keys = [k for k in transformer_state_dict if k.endswith(("_scale",))]
+        for k in scale_keys:
+            del transformer_state_dict[k]
+
         # cast to dtype
         for key in transformer_state_dict:
             transformer_state_dict[key] = transformer_state_dict[key].to(dtype)

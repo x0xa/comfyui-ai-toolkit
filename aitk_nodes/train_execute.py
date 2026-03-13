@@ -236,21 +236,23 @@ class AIToolkitTrainExecute:
 
         if exit_code != 0:
             full = process.full_output or ""
-            # Extract traceback/error lines if present
-            error_lines = []
-            in_traceback = False
-            for line in full.split("\n"):
-                if "Traceback" in line or "Error" in line or "Exception" in line:
-                    in_traceback = True
-                if in_traceback:
-                    error_lines.append(line)
-            if error_lines:
-                error_msg = "\n".join(error_lines[-80:])
+            # Save full log to file for debugging
+            log_path = os.path.join(config_dir, f"{job_name}_error.log")
+            try:
+                with open(log_path, "w") as f:
+                    f.write(full)
+            except Exception:
+                log_path = "(failed to write log)"
+            # Show first 2000 and last 2000 chars to capture both
+            # the error cause and the tail
+            if len(full) > 5000:
+                error_msg = full[:2500] + "\n\n... [truncated, full log: " + log_path + "] ...\n\n" + full[-2500:]
             else:
-                error_msg = full[-8000:]
+                error_msg = full
             raise RuntimeError(
                 f"Training failed with exit code {exit_code}.\n"
-                f"Last output:\n{error_msg}"
+                f"Full log saved to: {log_path}\n"
+                f"Output:\n{error_msg}"
             )
 
         # Find the final LoRA checkpoint
