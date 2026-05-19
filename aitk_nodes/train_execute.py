@@ -115,162 +115,170 @@ class AIToolkitTrainExecute:
         epoch_events = _load_pkg_module("utils.epoch_events")
         upload_epoch_artifacts = _load_pkg_module("utils.checkpoint_upload").upload_epoch_artifacts
 
-        # Free VRAM before training
-        if has_comfy:
-            comfy.model_management.soft_empty_cache()
-            comfy.model_management.unload_all_models()
-
-        # Determine datasets
-        if dataset_list is not None:
-            datasets = dataset_list
-        else:
-            datasets = [dataset_config]
-
-        # Run auto-captioning if configured
-        if caption_config and caption_config.get("enabled", False):
-            from .caption_config import AIToolkitCaptionConfig
-            for ds in datasets:
-                folder = ds.get("folder_path", "")
-                if folder:
-                    success, msg = AIToolkitCaptionConfig.run_captioning(
-                        caption_config, folder, AITK_DIR
-                    )
-                    if not success:
-                        raise RuntimeError(f"Auto-captioning failed: {msg}")
-
-        # Build config
-        full_config = build_config(
-            job_name=job_name,
-            training_folder=training_folder,
-            device=device,
-            model_config=model_config,
-            network_config=network_config,
-            train_config=train_config,
-            dataset_configs=datasets,
-            save_config=save_config,
-            sample_config=sample_config,
-            embedding_config=embedding_config,
-        )
-
-        # Write config to YAML
-        if os.path.isabs(training_folder):
-            config_dir = training_folder
-        else:
-            config_dir = os.path.join(AITK_DIR, training_folder)
-
-        os.makedirs(config_dir, exist_ok=True)
-        config_path = os.path.join(config_dir, f"{job_name}_config.yaml")
-        with open(config_path, "w") as f:
-            yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True)
-
-        output_base = config_dir
-        sample_watcher = SampleWatcher(output_base, job_name)
-        checkpoint_watcher = CheckpointWatcher(output_base, job_name)
-
         client_id = fantasio_context["client_id"] if fantasio_context else None
         total_epochs = fantasio_context["total_epochs"] if fantasio_context else 0
-        fantasio_lib = None
+
+        # Emit progress before any slow setup so the comfy-api stall monitor
+        # sees activity from the moment the node starts executing.
         if fantasio_context:
-            fantasio_lib = _load_pkg_module("utils.fantasio_lib").load_fantasio_lib()
-
-        # Setup progress bar
-        total_steps = train_config.get("steps", 2000)
-        pbar = None
-        if has_comfy:
-            pbar = comfy.utils.ProgressBar(total_steps)
-
-        # Launch training subprocess
-        process = AIToolkitProcess(config_path, AITK_DIR)
-        process.start()
-
-        last_step = 0
-        last_sample_check = 0
-        last_progress_emit = 0
-        epoch_counter = 0
-        pending_samples = []
+            epoch_events.emit_message(client_id, "Preparing training")
 
         try:
-            while process.is_running():
-                process.get_new_lines()
+            # Free VRAM before training
+            if has_comfy:
+                comfy.model_management.soft_empty_cache()
+                comfy.model_management.unload_all_models()
 
-                progress = process.progress
-                now = time.time()
-                step_changed = progress.step > last_step
-
-                if step_changed and pbar:
-                    pbar.update_absolute(progress.step, total_steps)
-
-                # Heartbeat: emit progress on every step and at least every
-                # HEARTBEAT_INTERVAL_SECONDS so silent phases (model load,
-                # validation, saving) never look like a stalled instance.
-                if fantasio_context and (step_changed or now - last_progress_emit >= HEARTBEAT_INTERVAL_SECONDS):
-                    self._emit_progress(
-                        epoch_events, client_id, progress, total_steps, epoch_counter, total_epochs
-                    )
-                    last_progress_emit = now
-
-                last_step = progress.step
-
-                if now - last_sample_check > SAMPLE_POLL_INTERVAL_SECONDS:
-                    pending_samples.extend(sample_watcher.check_new_samples())
-                    last_sample_check = now
-
-                if fantasio_context:
-                    for checkpoint_path in checkpoint_watcher.check_new_checkpoints():
-                        epoch_counter += 1
-                        pending_samples.extend(sample_watcher.check_new_samples())
-                        epoch_events.emit_message(client_id, f"Uploading epoch {epoch_counter} checkpoint")
-                        self._handle_epoch(
-                            epoch_events, upload_epoch_artifacts, fantasio_lib, fantasio_context,
-                            client_id, epoch_counter, total_epochs, checkpoint_path,
-                            pending_samples, process.progress,
-                        )
-                        pending_samples = []
-                        last_progress_emit = time.time()
-
-                time.sleep(LOOP_SLEEP_SECONDS)
-
-        except KeyboardInterrupt:
-            process.terminate()
-            raise
-
-        # Wait for process to finish
-        exit_code = process.wait(timeout=30)
-
-        if exit_code != 0:
-            full = process.full_output or ""
-            log_path = os.path.join(config_dir, f"{job_name}_error.log")
-            try:
-                with open(log_path, "w") as f:
-                    f.write(full)
-            except Exception:
-                log_path = "(failed to write log)"
-            if len(full) > 5000:
-                error_msg = full[:2500] + "\n\n... [truncated, full log: " + log_path + "] ...\n\n" + full[-2500:]
+            # Determine datasets
+            if dataset_list is not None:
+                datasets = dataset_list
             else:
-                error_msg = full
-            failure = (
-                f"Training failed with exit code {exit_code}.\n"
-                f"Full log saved to: {log_path}\n"
-                f"Output:\n{error_msg}"
+                datasets = [dataset_config]
+
+            # Run auto-captioning if configured
+            if caption_config and caption_config.get("enabled", False):
+                from .caption_config import AIToolkitCaptionConfig
+                for ds in datasets:
+                    folder = ds.get("folder_path", "")
+                    if folder:
+                        if fantasio_context:
+                            epoch_events.emit_message(client_id, "Captioning dataset")
+                        success, msg = AIToolkitCaptionConfig.run_captioning(
+                            caption_config, folder, AITK_DIR
+                        )
+                        if not success:
+                            raise RuntimeError(f"Auto-captioning failed: {msg}")
+
+            # Build config
+            full_config = build_config(
+                job_name=job_name,
+                training_folder=training_folder,
+                device=device,
+                model_config=model_config,
+                network_config=network_config,
+                train_config=train_config,
+                dataset_configs=datasets,
+                save_config=save_config,
+                sample_config=sample_config,
+                embedding_config=embedding_config,
             )
+
+            # Write config to YAML
+            if os.path.isabs(training_folder):
+                config_dir = training_folder
+            else:
+                config_dir = os.path.join(AITK_DIR, training_folder)
+
+            os.makedirs(config_dir, exist_ok=True)
+            config_path = os.path.join(config_dir, f"{job_name}_config.yaml")
+            with open(config_path, "w") as f:
+                yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True)
+
+            output_base = config_dir
+            sample_watcher = SampleWatcher(output_base, job_name)
+            checkpoint_watcher = CheckpointWatcher(output_base, job_name)
+
+            fantasio_lib = None
             if fantasio_context:
-                epoch_events.emit_training_failed(client_id, f"Training failed with exit code {exit_code}")
-            raise RuntimeError(failure)
+                fantasio_lib = _load_pkg_module("utils.fantasio_lib").load_fantasio_lib()
 
-        # Find the final LoRA checkpoint
-        lora_path = self._find_latest_checkpoint(output_base, job_name)
+            # Setup progress bar
+            total_steps = train_config.get("steps", 2000)
+            pbar = None
+            if has_comfy:
+                pbar = comfy.utils.ProgressBar(total_steps)
 
-        # Load sample images for output
-        all_samples = sample_watcher.get_latest_samples(count=20)
-        sample_tensor = load_images_as_tensor(all_samples)
-        if sample_tensor is None:
-            sample_tensor = torch.zeros(1, 64, 64, 3)
+            # Launch training subprocess
+            process = AIToolkitProcess(config_path, AITK_DIR)
+            process.start()
 
-        training_log = process.full_output
-        final_loss = process.progress.loss
+            last_step = 0
+            last_sample_check = 0
+            last_progress_emit = 0
+            epoch_counter = 0
+            pending_samples = []
 
-        return (lora_path, sample_tensor, training_log, final_loss)
+            try:
+                while process.is_running():
+                    process.get_new_lines()
+
+                    progress = process.progress
+                    now = time.time()
+                    step_changed = progress.step > last_step
+
+                    if step_changed and pbar:
+                        pbar.update_absolute(progress.step, total_steps)
+
+                    # Heartbeat: emit progress on every step and at least every
+                    # HEARTBEAT_INTERVAL_SECONDS so silent phases (model load,
+                    # validation, saving) never look like a stalled instance.
+                    if fantasio_context and (step_changed or now - last_progress_emit >= HEARTBEAT_INTERVAL_SECONDS):
+                        self._emit_progress(
+                            epoch_events, client_id, progress, total_steps, epoch_counter, total_epochs
+                        )
+                        last_progress_emit = now
+
+                    last_step = progress.step
+
+                    if now - last_sample_check > SAMPLE_POLL_INTERVAL_SECONDS:
+                        pending_samples.extend(sample_watcher.check_new_samples())
+                        last_sample_check = now
+
+                    if fantasio_context:
+                        for checkpoint_path in checkpoint_watcher.check_new_checkpoints():
+                            epoch_counter += 1
+                            pending_samples.extend(sample_watcher.check_new_samples())
+                            epoch_events.emit_message(client_id, f"Uploading epoch {epoch_counter} checkpoint")
+                            self._handle_epoch(
+                                epoch_events, upload_epoch_artifacts, fantasio_lib, fantasio_context,
+                                client_id, epoch_counter, total_epochs, checkpoint_path,
+                                pending_samples, process.progress,
+                            )
+                            pending_samples = []
+                            last_progress_emit = time.time()
+
+                    time.sleep(LOOP_SLEEP_SECONDS)
+
+            except KeyboardInterrupt:
+                process.terminate()
+                raise
+
+            # Wait for process to finish
+            exit_code = process.wait(timeout=30)
+
+            if exit_code != 0:
+                full = process.full_output or ""
+                log_path = os.path.join(config_dir, f"{job_name}_error.log")
+                try:
+                    with open(log_path, "w") as f:
+                        f.write(full)
+                except Exception:
+                    log_path = "(failed to write log)"
+                raise RuntimeError(
+                    f"Training failed with exit code {exit_code}. Full log: {log_path}"
+                )
+
+            # Find the final LoRA checkpoint
+            lora_path = self._find_latest_checkpoint(output_base, job_name)
+
+            # Load sample images for output
+            all_samples = sample_watcher.get_latest_samples(count=20)
+            sample_tensor = load_images_as_tensor(all_samples)
+            if sample_tensor is None:
+                sample_tensor = torch.zeros(1, 64, 64, 3)
+
+            training_log = process.full_output
+            final_loss = process.progress.loss
+
+            return (lora_path, sample_tensor, training_log, final_loss)
+
+        except BaseException as e:
+            # Any failure — config errors, captioning, a crashed subprocess or an
+            # interrupt — is reported to comfy-api so the task fails fast instead
+            # of waiting for the stall monitor.
+            if fantasio_context:
+                epoch_events.emit_training_failed(client_id, str(e))
+            raise
 
     def _emit_progress(self, epoch_events, client_id, progress, total_steps, completed_epochs, total_epochs):
         steps_total = progress.total_steps or total_steps

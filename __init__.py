@@ -9,6 +9,8 @@ from .aitk_nodes.sample_config import AIToolkitSampleConfig
 from .aitk_nodes.save_config import AIToolkitSaveConfig
 from .aitk_nodes.embedding_config import AIToolkitEmbeddingConfig
 from .aitk_nodes.caption_config import AIToolkitCaptionConfig
+from .aitk_nodes.fantasio_train_config import FantasioTrainingContext
+from .aitk_nodes.dataset_download import FantasioDownloadAndExtractArchive
 from .aitk_nodes.train_execute import AIToolkitTrainExecute
 
 NODE_CLASS_MAPPINGS = {
@@ -22,6 +24,8 @@ NODE_CLASS_MAPPINGS = {
     "AIToolkitEmbeddingConfig": AIToolkitEmbeddingConfig,
     "AIToolkitCaptionConfig": AIToolkitCaptionConfig,
     "AIToolkitTrainExecute": AIToolkitTrainExecute,
+    "FantasioTrainingContext": FantasioTrainingContext,
+    "FantasioDownloadAndExtractArchive": FantasioDownloadAndExtractArchive,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -35,6 +39,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AIToolkitEmbeddingConfig": "AI Toolkit - Embedding Config",
     "AIToolkitCaptionConfig": "AI Toolkit - Caption Config",
     "AIToolkitTrainExecute": "AI Toolkit - Train LoRA",
+    "FantasioTrainingContext": "Fantasio Training Context",
+    "FantasioDownloadAndExtractArchive": "Fantasio Download And Extract Archive",
 }
 
 WEB_DIRECTORY = "./web"
