@@ -1,4 +1,8 @@
-"""Main training execution node. Assembles config, runs ai-toolkit subprocess."""
+"""Main training execution node. Assembles config, runs ai-toolkit subprocess.
+
+When a FantasioTrainingContext is connected it also uploads each saved checkpoint
+with its epoch samples to S3 and emits the comfy-api training contract events.
+"""
 
 import os
 import sys
@@ -9,6 +13,9 @@ import importlib.util
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AITK_DIR = os.path.join(_PKG_ROOT, "ai-toolkit")
+
+SAMPLE_POLL_INTERVAL_SECONDS = 5
+LOOP_SLEEP_SECONDS = 0.5
 
 
 def _load_pkg_module(rel_path):
@@ -64,6 +71,7 @@ class AIToolkitTrainExecute:
                 "embedding_config": ("AITK_EMBEDDING_CONFIG",),
                 "caption_config": ("AITK_CAPTION_CONFIG",),
                 "dataset_list": ("AITK_DATASET_LIST",),
+                "fantasio_context": ("AITK_FANTASIO_CTX",),
             },
         }
 
@@ -86,6 +94,7 @@ class AIToolkitTrainExecute:
         embedding_config: dict = None,
         caption_config: dict = None,
         dataset_list: list = None,
+        fantasio_context: dict = None,
     ):
         import torch
 
@@ -93,7 +102,6 @@ class AIToolkitTrainExecute:
         try:
             import comfy.model_management
             import comfy.utils
-            from server import PromptServer
             has_comfy = True
         except ImportError:
             has_comfy = False
@@ -102,6 +110,9 @@ class AIToolkitTrainExecute:
         AIToolkitProcess = _load_pkg_module("utils.process_manager").AIToolkitProcess
         _sw = _load_pkg_module("utils.sample_watcher")
         SampleWatcher, load_images_as_tensor = _sw.SampleWatcher, _sw.load_images_as_tensor
+        CheckpointWatcher = _load_pkg_module("utils.checkpoint_watcher").CheckpointWatcher
+        epoch_events = _load_pkg_module("utils.epoch_events")
+        upload_epoch_artifacts = _load_pkg_module("utils.checkpoint_upload").upload_epoch_artifacts
 
         # Free VRAM before training
         if has_comfy:
@@ -151,9 +162,15 @@ class AIToolkitTrainExecute:
         with open(config_path, "w") as f:
             yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True)
 
-        # Determine output/sample directories
         output_base = config_dir
         sample_watcher = SampleWatcher(output_base, job_name)
+        checkpoint_watcher = CheckpointWatcher(output_base, job_name)
+
+        client_id = fantasio_context["client_id"] if fantasio_context else None
+        total_epochs = fantasio_context["total_epochs"] if fantasio_context else 0
+        fantasio_lib = None
+        if fantasio_context:
+            fantasio_lib = _load_pkg_module("utils.fantasio_lib").load_fantasio_lib()
 
         # Setup progress bar
         total_steps = train_config.get("steps", 2000)
@@ -167,65 +184,40 @@ class AIToolkitTrainExecute:
 
         last_step = 0
         last_sample_check = 0
-        latest_samples = []
+        epoch_counter = 0
+        pending_samples = []
 
         try:
             while process.is_running():
-                # Read new output lines
-                new_lines = process.get_new_lines()
+                process.get_new_lines()
 
-                for line in new_lines:
-                    # Send log lines to frontend
-                    if has_comfy and line.strip():
-                        try:
-                            PromptServer.instance.send_sync(
-                                "aitoolkit.log",
-                                {"message": line},
-                            )
-                        except Exception:
-                            pass
-
-                # Update progress
                 progress = process.progress
                 if progress.step > last_step:
-                    step_delta = progress.step - last_step
                     if pbar:
                         pbar.update_absolute(progress.step, total_steps)
-                    if has_comfy:
-                        try:
-                            PromptServer.instance.send_sync(
-                                "aitoolkit.progress",
-                                {
-                                    "step": progress.step,
-                                    "total_steps": progress.total_steps or total_steps,
-                                    "loss": progress.loss,
-                                },
-                            )
-                        except Exception:
-                            pass
+                    if fantasio_context:
+                        self._emit_step_progress(
+                            epoch_events, client_id, progress, total_steps, epoch_counter, total_epochs
+                        )
                     last_step = progress.step
 
-                # Check for new sample images periodically
                 now = time.time()
-                if now - last_sample_check > 5:
-                    new_samples = sample_watcher.check_new_samples()
-                    if new_samples:
-                        latest_samples = new_samples
-                        if has_comfy:
-                            try:
-                                PromptServer.instance.send_sync(
-                                    "aitoolkit.samples",
-                                    {
-                                        "step": last_step,
-                                        "count": len(new_samples),
-                                        "paths": new_samples,
-                                    },
-                                )
-                            except Exception:
-                                pass
+                if now - last_sample_check > SAMPLE_POLL_INTERVAL_SECONDS:
+                    pending_samples.extend(sample_watcher.check_new_samples())
                     last_sample_check = now
 
-                time.sleep(0.5)
+                if fantasio_context:
+                    for checkpoint_path in checkpoint_watcher.check_new_checkpoints():
+                        epoch_counter += 1
+                        pending_samples.extend(sample_watcher.check_new_samples())
+                        self._handle_epoch(
+                            epoch_events, upload_epoch_artifacts, fantasio_lib, fantasio_context,
+                            client_id, epoch_counter, total_epochs, checkpoint_path,
+                            pending_samples, process.progress,
+                        )
+                        pending_samples = []
+
+                time.sleep(LOOP_SLEEP_SECONDS)
 
         except KeyboardInterrupt:
             process.terminate()
@@ -236,24 +228,24 @@ class AIToolkitTrainExecute:
 
         if exit_code != 0:
             full = process.full_output or ""
-            # Save full log to file for debugging
             log_path = os.path.join(config_dir, f"{job_name}_error.log")
             try:
                 with open(log_path, "w") as f:
                     f.write(full)
             except Exception:
                 log_path = "(failed to write log)"
-            # Show first 2000 and last 2000 chars to capture both
-            # the error cause and the tail
             if len(full) > 5000:
                 error_msg = full[:2500] + "\n\n... [truncated, full log: " + log_path + "] ...\n\n" + full[-2500:]
             else:
                 error_msg = full
-            raise RuntimeError(
+            failure = (
                 f"Training failed with exit code {exit_code}.\n"
                 f"Full log saved to: {log_path}\n"
                 f"Output:\n{error_msg}"
             )
+            if fantasio_context:
+                epoch_events.emit_training_failed(client_id, f"Training failed with exit code {exit_code}")
+            raise RuntimeError(failure)
 
         # Find the final LoRA checkpoint
         lora_path = self._find_latest_checkpoint(output_base, job_name)
@@ -262,7 +254,6 @@ class AIToolkitTrainExecute:
         all_samples = sample_watcher.get_latest_samples(count=20)
         sample_tensor = load_images_as_tensor(all_samples)
         if sample_tensor is None:
-            # Return a small placeholder image
             sample_tensor = torch.zeros(1, 64, 64, 3)
 
         training_log = process.full_output
@@ -270,11 +261,38 @@ class AIToolkitTrainExecute:
 
         return (lora_path, sample_tensor, training_log, final_loss)
 
+    def _emit_step_progress(self, epoch_events, client_id, progress, total_steps, completed_epochs, total_epochs):
+        steps_total = progress.total_steps or total_steps
+        percentage = round((progress.step / steps_total) * 100, 2) if steps_total else 0.0
+        epoch_events.emit_progress(client_id, {
+            "completedSteps": progress.step,
+            "totalSteps": steps_total,
+            "completedEpochs": completed_epochs,
+            "totalEpochs": total_epochs or 0,
+            "progressPercentage": percentage,
+        })
+
+    def _handle_epoch(self, epoch_events, upload_epoch_artifacts, fantasio_lib, context,
+                      client_id, epoch, total_epochs, checkpoint_path, sample_paths, progress):
+        try:
+            lora_url, sample_urls = upload_epoch_artifacts(
+                fantasio_lib, context, epoch, checkpoint_path, sample_paths
+            )
+            epoch_events.emit_epoch_uploaded(
+                client_id, context["task_id"], context["user_id"], epoch,
+                progress.loss, progress.step, lora_url, sample_urls,
+            )
+            if total_epochs and epoch >= total_epochs:
+                epoch_events.emit_task_completed(
+                    client_id, context["task_id"], context["user_id"], epoch
+                )
+        except Exception as e:
+            epoch_events.emit_message(client_id, f"Epoch {epoch} upload failed: {e}")
+
     def _find_latest_checkpoint(self, output_base: str, job_name: str) -> str:
         """Find the most recent checkpoint file in the output directory."""
         job_dir = os.path.join(output_base, job_name)
 
-        # Look for .safetensors files
         patterns = [
             os.path.join(job_dir, "*.safetensors"),
             os.path.join(job_dir, "**", "*.safetensors"),
@@ -285,12 +303,10 @@ class AIToolkitTrainExecute:
             all_checkpoints.extend(glob.glob(pattern, recursive=True))
 
         if not all_checkpoints:
-            # Try looking for diffusers format
             diffusers_dirs = glob.glob(os.path.join(job_dir, "*", "model_index.json"))
             if diffusers_dirs:
                 return os.path.dirname(diffusers_dirs[-1])
             return ""
 
-        # Return the most recently modified one
         all_checkpoints.sort(key=lambda p: os.path.getmtime(p), reverse=True)
         return all_checkpoints[0]

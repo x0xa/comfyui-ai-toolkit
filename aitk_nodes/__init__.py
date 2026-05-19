@@ -7,6 +7,8 @@ from .sample_config import AIToolkitSampleConfig
 from .save_config import AIToolkitSaveConfig
 from .embedding_config import AIToolkitEmbeddingConfig
 from .caption_config import AIToolkitCaptionConfig
+from .fantasio_train_config import FantasioTrainingContext
+from .dataset_download import FantasioDownloadAndExtractArchive
 from .train_execute import AIToolkitTrainExecute
 
 NODE_CLASS_MAPPINGS = {
@@ -20,6 +22,8 @@ NODE_CLASS_MAPPINGS = {
     "AIToolkitEmbeddingConfig": AIToolkitEmbeddingConfig,
     "AIToolkitCaptionConfig": AIToolkitCaptionConfig,
     "AIToolkitTrainExecute": AIToolkitTrainExecute,
+    "FantasioTrainingContext": FantasioTrainingContext,
+    "FantasioDownloadAndExtractArchive": FantasioDownloadAndExtractArchive,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -33,4 +37,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AIToolkitEmbeddingConfig": "AI Toolkit - Embedding Config",
     "AIToolkitCaptionConfig": "AI Toolkit - Caption Config",
     "AIToolkitTrainExecute": "AI Toolkit - Train LoRA",
+    "FantasioTrainingContext": "Fantasio Training Context",
+    "FantasioDownloadAndExtractArchive": "Fantasio Download And Extract Archive",
 }
