@@ -16,6 +16,7 @@ AITK_DIR = os.path.join(_PKG_ROOT, "ai-toolkit")
 
 SAMPLE_POLL_INTERVAL_SECONDS = 5
 LOOP_SLEEP_SECONDS = 0.5
+HEARTBEAT_INTERVAL_SECONDS = 10
 
 
 def _load_pkg_module(rel_path):
@@ -184,6 +185,7 @@ class AIToolkitTrainExecute:
 
         last_step = 0
         last_sample_check = 0
+        last_progress_emit = 0
         epoch_counter = 0
         pending_samples = []
 
@@ -192,16 +194,23 @@ class AIToolkitTrainExecute:
                 process.get_new_lines()
 
                 progress = process.progress
-                if progress.step > last_step:
-                    if pbar:
-                        pbar.update_absolute(progress.step, total_steps)
-                    if fantasio_context:
-                        self._emit_step_progress(
-                            epoch_events, client_id, progress, total_steps, epoch_counter, total_epochs
-                        )
-                    last_step = progress.step
-
                 now = time.time()
+                step_changed = progress.step > last_step
+
+                if step_changed and pbar:
+                    pbar.update_absolute(progress.step, total_steps)
+
+                # Heartbeat: emit progress on every step and at least every
+                # HEARTBEAT_INTERVAL_SECONDS so silent phases (model load,
+                # validation, saving) never look like a stalled instance.
+                if fantasio_context and (step_changed or now - last_progress_emit >= HEARTBEAT_INTERVAL_SECONDS):
+                    self._emit_progress(
+                        epoch_events, client_id, progress, total_steps, epoch_counter, total_epochs
+                    )
+                    last_progress_emit = now
+
+                last_step = progress.step
+
                 if now - last_sample_check > SAMPLE_POLL_INTERVAL_SECONDS:
                     pending_samples.extend(sample_watcher.check_new_samples())
                     last_sample_check = now
@@ -210,12 +219,14 @@ class AIToolkitTrainExecute:
                     for checkpoint_path in checkpoint_watcher.check_new_checkpoints():
                         epoch_counter += 1
                         pending_samples.extend(sample_watcher.check_new_samples())
+                        epoch_events.emit_message(client_id, f"Uploading epoch {epoch_counter} checkpoint")
                         self._handle_epoch(
                             epoch_events, upload_epoch_artifacts, fantasio_lib, fantasio_context,
                             client_id, epoch_counter, total_epochs, checkpoint_path,
                             pending_samples, process.progress,
                         )
                         pending_samples = []
+                        last_progress_emit = time.time()
 
                 time.sleep(LOOP_SLEEP_SECONDS)
 
@@ -261,16 +272,21 @@ class AIToolkitTrainExecute:
 
         return (lora_path, sample_tensor, training_log, final_loss)
 
-    def _emit_step_progress(self, epoch_events, client_id, progress, total_steps, completed_epochs, total_epochs):
+    def _emit_progress(self, epoch_events, client_id, progress, total_steps, completed_epochs, total_epochs):
         steps_total = progress.total_steps or total_steps
         percentage = round((progress.step / steps_total) * 100, 2) if steps_total else 0.0
-        epoch_events.emit_progress(client_id, {
+        progress_data = {
             "completedSteps": progress.step,
             "totalSteps": steps_total,
             "completedEpochs": completed_epochs,
             "totalEpochs": total_epochs or 0,
             "progressPercentage": percentage,
-        })
+        }
+        # Non-training phases (load/save/sample) carry a phase message so the UI
+        # shows the activity; the training phase keeps the numeric progress bar.
+        if progress.phase != "Training":
+            progress_data["message"] = progress.phase
+        epoch_events.emit_progress(client_id, progress_data)
 
     def _handle_epoch(self, epoch_events, upload_epoch_artifacts, fantasio_lib, context,
                       client_id, epoch, total_epochs, checkpoint_path, sample_paths, progress):

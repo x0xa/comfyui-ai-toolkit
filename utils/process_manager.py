@@ -11,13 +11,14 @@ from typing import Optional
 
 
 class ProgressInfo:
-    __slots__ = ("step", "total_steps", "loss", "message")
+    __slots__ = ("step", "total_steps", "loss", "message", "phase")
 
     def __init__(self):
         self.step = 0
         self.total_steps = 0
         self.loss = 0.0
         self.message = ""
+        self.phase = "Preparing training"
 
 
 class AIToolkitProcess:
@@ -34,6 +35,8 @@ class AIToolkitProcess:
     SAMPLE_PATTERN = re.compile(r"[Ss]ampl|[Gg]enerating\s+sample")
     # Save indicator
     SAVE_PATTERN = re.compile(r"[Ss]aving|[Cc]heckpoint\s+saved")
+    # Model load / quantization indicator
+    LOAD_PATTERN = re.compile(r"[Ll]oading|[Qq]uantiz|[Cc]aching\s+latents")
 
     def __init__(self, config_path: str, ai_toolkit_dir: str):
         self.config_path = config_path
@@ -80,7 +83,7 @@ class AIToolkitProcess:
             pass
 
     def _parse_progress(self, line: str):
-        """Parse a line for progress information."""
+        """Parse a line for progress and training phase information."""
         # Try tqdm pattern first
         m = self.TQDM_PATTERN.search(line)
         if m:
@@ -88,6 +91,7 @@ class AIToolkitProcess:
             self._latest_progress.total_steps = int(m.group(2))
             if m.group(3):
                 self._latest_progress.loss = float(m.group(3))
+            self._latest_progress.phase = "Training"
             return
 
         # Try step pattern
@@ -96,11 +100,20 @@ class AIToolkitProcess:
             self._latest_progress.step = int(m.group(1))
             if m.group(2):
                 self._latest_progress.total_steps = int(m.group(2))
+            self._latest_progress.phase = "Training"
 
         # Try loss pattern
         m = self.LOSS_PATTERN.search(line)
         if m:
             self._latest_progress.loss = float(m.group(1))
+
+        # Detect non-step phases so the heartbeat stays informative between steps
+        if self.SAVE_PATTERN.search(line):
+            self._latest_progress.phase = "Saving checkpoint"
+        elif self.SAMPLE_PATTERN.search(line):
+            self._latest_progress.phase = "Generating samples"
+        elif self.LOAD_PATTERN.search(line):
+            self._latest_progress.phase = "Loading model"
 
     def get_new_lines(self) -> list[str]:
         """Get all new output lines since last call (non-blocking)."""
