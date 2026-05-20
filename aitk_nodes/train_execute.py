@@ -189,7 +189,7 @@ class AIToolkitTrainExecute:
                 pbar = comfy.utils.ProgressBar(total_steps)
 
             # Launch training subprocess
-            process = AIToolkitProcess(config_path, AITK_DIR)
+            process = AIToolkitProcess(config_path, AITK_DIR, train_steps=total_steps)
             process.start()
 
             last_step = 0
@@ -236,6 +236,7 @@ class AIToolkitTrainExecute:
                             )
                             pending_samples = []
                             last_progress_emit = time.time()
+                            process.progress.reset_loss_window()
 
                     time.sleep(LOOP_SLEEP_SECONDS)
 
@@ -289,9 +290,9 @@ class AIToolkitTrainExecute:
             "completedEpochs": completed_epochs,
             "totalEpochs": total_epochs or 0,
             "progressPercentage": percentage,
+            "phase": progress.phase,
+            "avgLoss": progress.avg_loss,
         }
-        # Non-training phases (load/save/sample) carry a phase message so the UI
-        # shows the activity; the training phase keeps the numeric progress bar.
         if progress.phase != "Training":
             progress_data["message"] = progress.phase
         epoch_events.emit_progress(client_id, progress_data)
@@ -304,7 +305,7 @@ class AIToolkitTrainExecute:
             )
             epoch_events.emit_epoch_uploaded(
                 client_id, context["task_id"], context["user_id"], epoch,
-                progress.loss, progress.step, lora_url, sample_urls,
+                progress.avg_loss, progress.step, lora_url, sample_urls,
             )
             if total_epochs and epoch >= total_epochs:
                 epoch_events.emit_task_completed(
