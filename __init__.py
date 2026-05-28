@@ -11,6 +11,7 @@ from .aitk_nodes.embedding_config import AIToolkitEmbeddingConfig
 from .aitk_nodes.caption_config import AIToolkitCaptionConfig
 from .aitk_nodes.fantasio_train_config import FantasioTrainingContext
 from .aitk_nodes.dataset_download import FantasioDownloadAndExtractArchive
+from .aitk_nodes.dataset_upload import FantasioUploadDataset
 from .aitk_nodes.train_execute import AIToolkitTrainExecute
 
 NODE_CLASS_MAPPINGS = {
@@ -26,6 +27,7 @@ NODE_CLASS_MAPPINGS = {
     "AIToolkitTrainExecute": AIToolkitTrainExecute,
     "FantasioTrainingContext": FantasioTrainingContext,
     "FantasioDownloadAndExtractArchive": FantasioDownloadAndExtractArchive,
+    "FantasioUploadDataset": FantasioUploadDataset,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -41,6 +43,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AIToolkitTrainExecute": "AI Toolkit - Train LoRA",
     "FantasioTrainingContext": "Fantasio Training Context",
     "FantasioDownloadAndExtractArchive": "Fantasio Download And Extract Archive",
+    "FantasioUploadDataset": "Fantasio Upload Dataset",
 }
 
 WEB_DIRECTORY = "./web"
