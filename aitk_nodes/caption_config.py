@@ -185,8 +185,9 @@ print(f"CAPTIONING_COMPLETE: {{captioned}} images captioned")
             if result.returncode == 0 and "CAPTIONING_COMPLETE" in result.stdout:
                 return True, "Captioning completed successfully"
             else:
-                error = result.stderr or result.stdout
-                return False, f"Captioning failed: {error[-500:]}"
+                error = (result.stderr or result.stdout or "").strip()
+                tail = error[-4000:] if error else "(no captioning output captured)"
+                return False, f"Captioning failed (exit {result.returncode}): {tail}"
         except subprocess.TimeoutExpired:
             return False, "Captioning timed out after 1 hour"
         except Exception as e:

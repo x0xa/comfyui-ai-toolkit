@@ -17,6 +17,23 @@ AITK_DIR = os.path.join(_PKG_ROOT, "ai-toolkit")
 SAMPLE_POLL_INTERVAL_SECONDS = 5
 LOOP_SLEEP_SECONDS = 0.5
 HEARTBEAT_INTERVAL_SECONDS = 10
+OUTPUT_TAIL_CHARS = 6000
+
+
+def _classify_training_failure(error, output):
+    text = str(error).strip()
+    haystack = f"{text}\n{output or ''}".lower()
+
+    if "out of memory" in haystack or "cuda error" in haystack or "cublas" in haystack:
+        return (
+            "CUDA out of memory / GPU error during training "
+            f"(reduce batch size or resolution): {text}"
+        )
+
+    if "no images found" in haystack or "no such file" in haystack or "filenotfounderror" in haystack:
+        return f"Dataset / file error during training: {text}"
+
+    return text
 
 
 def _load_pkg_module(rel_path):
@@ -122,6 +139,8 @@ class AIToolkitTrainExecute:
         # sees activity from the moment the node starts executing.
         if fantasio_context:
             epoch_events.emit_message(client_id, "Preparing training")
+
+        process = None
 
         try:
             # Free VRAM before training
@@ -255,8 +274,10 @@ class AIToolkitTrainExecute:
                         f.write(full)
                 except Exception:
                     log_path = "(failed to write log)"
+                tail = full[-OUTPUT_TAIL_CHARS:] if full else "(no output captured)"
                 raise RuntimeError(
-                    f"Training failed with exit code {exit_code}. Full log: {log_path}"
+                    f"Training failed with exit code {exit_code}. Full log: {log_path}\n"
+                    f"--- output tail ---\n{tail}"
                 )
 
             # Find the final LoRA checkpoint
@@ -278,7 +299,8 @@ class AIToolkitTrainExecute:
             # interrupt — is reported to comfy-api so the task fails fast instead
             # of waiting for the stall monitor.
             if fantasio_context:
-                epoch_events.emit_training_failed(client_id, str(e))
+                output = process.full_output if process is not None else ""
+                epoch_events.emit_training_failed(client_id, _classify_training_failure(e, output))
             raise
 
     def _emit_progress(self, epoch_events, client_id, progress, total_steps, completed_epochs, total_epochs):
@@ -312,7 +334,10 @@ class AIToolkitTrainExecute:
                     client_id, context["task_id"], context["user_id"], epoch
                 )
         except Exception as e:
-            epoch_events.emit_message(client_id, f"Epoch {epoch} upload failed: {e}")
+            epoch_events.emit_message(
+                client_id,
+                f"Epoch {epoch} checkpoint upload failed ({type(e).__name__}): {e}",
+            )
 
     def _find_latest_checkpoint(self, output_base: str, job_name: str) -> str:
         """Find the most recent checkpoint file in the output directory."""
