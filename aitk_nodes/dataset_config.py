@@ -44,6 +44,10 @@ class AIToolkitDatasetConfig:
                     "default": "",
                     "tooltip": "Path to control/source images folder (for Kontext-style editing)",
                 }),
+                "is_reg": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Treat as a regularization / prior-preservation dataset",
+                }),
             },
         }
 
@@ -56,6 +60,7 @@ class AIToolkitDatasetConfig:
         shuffle_tokens: bool = False,
         cache_latents_to_disk: bool = True,
         control_path: str = "",
+        is_reg: bool = False,
     ):
         # Parse resolution string into list of ints
         try:
@@ -70,6 +75,7 @@ class AIToolkitDatasetConfig:
             "shuffle_tokens": shuffle_tokens,
             "cache_latents_to_disk": cache_latents_to_disk,
             "resolution": res_list,
+            "is_reg": is_reg,
         }
 
         if control_path:
