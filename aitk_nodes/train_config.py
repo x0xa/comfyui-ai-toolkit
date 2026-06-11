@@ -114,6 +114,13 @@ class AIToolkitTrainConfig:
                     "step": 0.1,
                     "tooltip": "Min SNR gamma for loss weighting (0 = disabled, 5.0 typical)",
                 }),
+                "reg_weight": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.01,
+                    "tooltip": "Loss multiplier for regularization images (1.0 = full, 0.15-0.4 typical when prior-preservation should not dominate likeness)",
+                }),
                 "skip_first_sample": ("BOOLEAN", {
                     "default": False,
                     "tooltip": "Skip generating sample before training starts",
@@ -165,6 +172,7 @@ class AIToolkitTrainConfig:
         timestep_type: str = "sigmoid",
         noise_offset: float = 0.0,
         min_snr_gamma: float = 0.0,
+        reg_weight: float = 1.0,
         skip_first_sample: bool = False,
         disable_sampling: bool = False,
         linear_timesteps: bool = False,
@@ -197,6 +205,9 @@ class AIToolkitTrainConfig:
 
         if min_snr_gamma > 0:
             config["min_snr_gamma"] = min_snr_gamma
+
+        if reg_weight != 1.0:
+            config["reg_weight"] = reg_weight
 
         if skip_first_sample:
             config["skip_first_sample"] = True
