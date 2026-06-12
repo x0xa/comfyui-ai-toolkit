@@ -25,6 +25,13 @@ class AIToolkitDatasetConfig:
                 }),
             },
             "optional": {
+                "num_repeats": ("INT", {
+                    "default": 1,
+                    "min": 1,
+                    "max": 1000,
+                    "step": 1,
+                    "tooltip": "Number of times to repeat the dataset's file list per epoch",
+                }),
                 "caption_dropout_rate": ("FLOAT", {
                     "default": 0.05,
                     "min": 0.0,
@@ -56,6 +63,7 @@ class AIToolkitDatasetConfig:
         folder_path: str,
         caption_ext: str,
         resolution: str,
+        num_repeats: int = 1,
         caption_dropout_rate: float = 0.05,
         shuffle_tokens: bool = False,
         cache_latents_to_disk: bool = True,
@@ -75,6 +83,7 @@ class AIToolkitDatasetConfig:
             "shuffle_tokens": shuffle_tokens,
             "cache_latents_to_disk": cache_latents_to_disk,
             "resolution": res_list,
+            "num_repeats": num_repeats,
             "is_reg": is_reg,
         }
 
