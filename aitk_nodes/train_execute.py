@@ -131,6 +131,7 @@ class AIToolkitTrainExecute:
         CheckpointWatcher = _load_pkg_module("utils.checkpoint_watcher").CheckpointWatcher
         epoch_events = _load_pkg_module("utils.epoch_events")
         upload_epoch_artifacts = _load_pkg_module("utils.checkpoint_upload").upload_epoch_artifacts
+        compute_adapter_metrics = _load_pkg_module("utils.adapter_metrics").compute_adapter_metrics
 
         client_id = fantasio_context["client_id"] if fantasio_context else None
         total_epochs = fantasio_context["total_epochs"] if fantasio_context else 0
@@ -249,7 +250,8 @@ class AIToolkitTrainExecute:
                             pending_samples.extend(sample_watcher.check_new_samples())
                             epoch_events.emit_message(client_id, f"Uploading epoch {epoch_counter} checkpoint")
                             self._handle_epoch(
-                                epoch_events, upload_epoch_artifacts, fantasio_lib, fantasio_context,
+                                epoch_events, upload_epoch_artifacts, compute_adapter_metrics,
+                                fantasio_lib, fantasio_context,
                                 client_id, epoch_counter, total_epochs, checkpoint_path,
                                 pending_samples, process.progress,
                             )
@@ -319,15 +321,25 @@ class AIToolkitTrainExecute:
             progress_data["message"] = progress.phase
         epoch_events.emit_progress(client_id, progress_data)
 
-    def _handle_epoch(self, epoch_events, upload_epoch_artifacts, fantasio_lib, context,
+    def _handle_epoch(self, epoch_events, upload_epoch_artifacts, compute_adapter_metrics,
+                      fantasio_lib, context,
                       client_id, epoch, total_epochs, checkpoint_path, sample_paths, progress):
         try:
+            metrics = None
+            try:
+                metrics = compute_adapter_metrics(checkpoint_path)
+            except Exception as e:
+                epoch_events.emit_message(
+                    client_id,
+                    f"Epoch {epoch} adapter metrics failed ({type(e).__name__}): {e}",
+                )
+
             lora_url, sample_urls = upload_epoch_artifacts(
                 fantasio_lib, context, epoch, checkpoint_path, sample_paths
             )
             epoch_events.emit_epoch_uploaded(
                 client_id, context["task_id"], context["user_id"], epoch,
-                progress.avg_loss, progress.step, lora_url, sample_urls,
+                progress.avg_loss, progress.step, lora_url, sample_urls, metrics,
             )
             if total_epochs and epoch >= total_epochs:
                 epoch_events.emit_task_completed(

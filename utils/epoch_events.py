@@ -20,7 +20,8 @@ def emit_message(client_id, message):
     _send(client_id, "progress", {"message": message})
 
 
-def emit_epoch_uploaded(client_id, task_id, user_id, epoch, avg_loss, step, lora_url, sample_urls):
+def emit_epoch_uploaded(client_id, task_id, user_id, epoch, avg_loss, step, lora_url, sample_urls, metrics=None):
+    metrics = metrics or {}
     _send(client_id, "training.epoch.uploaded", {
         "task_id": int(task_id),
         "user_id": int(user_id),
@@ -29,6 +30,10 @@ def emit_epoch_uploaded(client_id, task_id, user_id, epoch, avg_loss, step, lora
         "step": int(step),
         "lora_url": lora_url,
         "sample_images": [{"url": url} for url in sample_urls],
+        "delta_norm": metrics.get("delta_norm"),
+        "max_weight": metrics.get("max_weight"),
+        "effective_scale": metrics.get("effective_scale"),
+        "param_count": metrics.get("param_count"),
     })
 
 
