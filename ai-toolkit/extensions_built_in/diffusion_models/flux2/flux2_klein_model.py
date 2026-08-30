@@ -1,9 +1,7 @@
 from .flux2_model import Flux2Model
 from transformers import Qwen3ForCausalLM, Qwen2Tokenizer
-from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype
+from toolkit.models.v2.text_encoders.qwen3 import Qwen3TextEncoder
 from toolkit.config_modules import ModelConfig
-from toolkit.memory_management.manager import MemoryManager
 from toolkit.basic import flush
 from .src.model import Klein9BParams, Klein4BParams
 
@@ -36,34 +34,17 @@ class Flux2KleinModel(Flux2Model):
 
     def load_te(self):
         # Allow overriding TE path via config (te_name_or_path), fall back to class default
-        te_path = getattr(self.model_config, 'te_name_or_path', None) or self.flux2_klein_te_path
+        te_path = getattr(self.model_config, "te_name_or_path", None) or self.flux2_klein_te_path
         if te_path is None:
             raise ValueError("flux2_klein_te_path must be set for Flux2KleinModel")
         dtype = self.torch_dtype
         self.print_and_status_update(f"Loading Qwen3 from {te_path}")
 
-        text_encoder: Qwen3ForCausalLM = Qwen3ForCausalLM.from_pretrained(
-            te_path,
-            torch_dtype=dtype,
+        # load + quantize + offload + placement, all driven by model_config
+        text_encoder = Qwen3TextEncoder.load(
+            te_path, subfolder="", **self.component_load_kwargs("te")
         )
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Qwen3")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
-        elif not self.model_config.low_vram:
-            text_encoder.to(self.device_torch, dtype=dtype)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
+        flush()
 
         tokenizer = Qwen2Tokenizer.from_pretrained(te_path)
         return text_encoder, tokenizer
