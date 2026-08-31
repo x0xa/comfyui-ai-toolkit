@@ -55,6 +55,10 @@ class AIToolkitDatasetConfig:
                     "default": False,
                     "tooltip": "Treat as a regularization / prior-preservation dataset",
                 }),
+                "trigger_word": ("STRING", {
+                    "default": "",
+                    "tooltip": "Trigger word carried by this dataset. Required by diff_output_preservation, which swaps it for the class when building the preservation embeddings",
+                }),
             },
         }
 
@@ -69,6 +73,7 @@ class AIToolkitDatasetConfig:
         cache_latents_to_disk: bool = True,
         control_path: str = "",
         is_reg: bool = False,
+        trigger_word: str = "",
     ):
         # Parse resolution string into list of ints
         try:
@@ -89,5 +94,8 @@ class AIToolkitDatasetConfig:
 
         if control_path:
             config["control_path"] = control_path
+
+        if trigger_word:
+            config["trigger_word"] = trigger_word
 
         return (config,)

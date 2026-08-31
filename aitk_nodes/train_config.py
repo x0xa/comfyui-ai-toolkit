@@ -142,6 +142,21 @@ class AIToolkitTrainConfig:
                     "tooltip": "Extra optimizer params as JSON (e.g. {\"weight_decay\": 1e-4})",
                     "multiline": True,
                 }),
+                "diff_output_preservation": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Preserve the base model's output for the plain class prompt, so the adapter only moves the trigger. Needs a trigger word on the dataset and train_text_encoder off",
+                }),
+                "diff_output_preservation_class": ("STRING", {
+                    "default": "",
+                    "tooltip": "Class prompt the preservation is anchored to (e.g. woman, man, person)",
+                }),
+                "diff_output_preservation_multiplier": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 10.0,
+                    "step": 0.05,
+                    "tooltip": "Weight of the preservation loss",
+                }),
                 "use_ema": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "Use Exponential Moving Average (smooths learning)",
@@ -178,6 +193,9 @@ class AIToolkitTrainConfig:
         linear_timesteps: bool = False,
         unload_text_encoder: bool = False,
         optimizer_params_json: str = "",
+        diff_output_preservation: bool = False,
+        diff_output_preservation_class: str = "",
+        diff_output_preservation_multiplier: float = 1.0,
         use_ema: bool = True,
         ema_decay: float = 0.99,
     ):
@@ -228,6 +246,11 @@ class AIToolkitTrainConfig:
                     config["optimizer_params"] = params
             except json.JSONDecodeError:
                 pass
+
+        if diff_output_preservation:
+            config["diff_output_preservation"] = True
+            config["diff_output_preservation_class"] = diff_output_preservation_class
+            config["diff_output_preservation_multiplier"] = diff_output_preservation_multiplier
 
         if use_ema:
             config["ema_config"] = {
