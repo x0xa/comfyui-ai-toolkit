@@ -1,7 +1,5 @@
 """Model configuration node for ai-toolkit training."""
 
-import json
-
 
 class AIToolkitModelConfig:
     CATEGORY = "AI Toolkit/Config"
@@ -10,7 +8,6 @@ class AIToolkitModelConfig:
     FUNCTION = "build"
 
     ARCHITECTURES = [
-        "krea2",
         "flux2_klein_9b",
         "flux2_klein_4b",
         "zimage",
@@ -25,16 +22,16 @@ class AIToolkitModelConfig:
                     "tooltip": "Local path to transformer weights (e.g. /models/flux-2-klein-base-9b.safetensors or folder containing it)",
                 }),
                 "arch": (cls.ARCHITECTURES, {
-                    "default": "krea2",
+                    "default": "flux2_klein_9b",
                     "tooltip": "Model architecture",
                 }),
                 "te_name_or_path": ("STRING", {
                     "default": "",
-                    "tooltip": "Local path to text encoder (e.g. /models/Qwen3-8B). krea2 reads its text encoder from model_kwargs_json instead",
+                    "tooltip": "Local path to text encoder (e.g. /models/Qwen3-8B or /models/Qwen3-8B-FP8)",
                 }),
                 "vae_path": ("STRING", {
                     "default": "",
-                    "tooltip": "Local path to VAE weights (e.g. /models/ae.safetensors). krea2 reads its VAE from model_kwargs_json instead",
+                    "tooltip": "Local path to VAE weights (e.g. /models/ae.safetensors)",
                 }),
             },
             "optional": {
@@ -65,11 +62,6 @@ class AIToolkitModelConfig:
                 "assistant_lora_path": ("STRING", {
                     "default": "",
                     "tooltip": "Optional assistant LoRA path for ZImage turbo training",
-                }),
-                "model_kwargs_json": ("STRING", {
-                    "default": "",
-                    "multiline": True,
-                    "tooltip": "Arch-specific model kwargs as JSON dict (krea2: text_encoder_path, vae_path)",
                 }),
                 "layer_offloading": ("BOOLEAN", {
                     "default": False,
@@ -105,7 +97,6 @@ class AIToolkitModelConfig:
         qtype_te: str = "qfloat8",
         extras_name_or_path: str = "",
         assistant_lora_path: str = "",
-        model_kwargs_json: str = "",
         layer_offloading: bool = False,
         layer_offloading_transformer_percent: float = 0.5,
         layer_offloading_text_encoder_percent: float = 0.5,
@@ -139,17 +130,6 @@ class AIToolkitModelConfig:
 
         if assistant_lora_path:
             config["assistant_lora_path"] = assistant_lora_path
-
-        # Parsed strictly: a silently dropped model_kwargs would send krea2 to the
-        # hub for its text encoder / VAE instead of the local paths in the image.
-        if model_kwargs_json.strip():
-            try:
-                model_kwargs = json.loads(model_kwargs_json)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"model_kwargs_json is not valid JSON: {e}") from e
-            if not isinstance(model_kwargs, dict):
-                raise ValueError("model_kwargs_json must be a JSON object")
-            config["model_kwargs"] = model_kwargs
 
         if layer_offloading:
             config["layer_offloading"] = True
