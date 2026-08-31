@@ -1,3 +1,4 @@
+import json
 import math
 import os
 from typing import TYPE_CHECKING, List, Optional
@@ -53,6 +54,20 @@ FLUX2_VAE_FILENAME = "ae.safetensors"
 FLUX2_TRANSFORMER_FILENAME = "flux2-dev.safetensors"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
+
+SHARD_INDEX_FILENAME = "model.safetensors.index.json"
+
+
+def load_sharded_state_dict(directory: str) -> dict:
+    """Merge a sharded checkpoint (``model.safetensors.index.json`` + its shards)."""
+    with open(os.path.join(directory, SHARD_INDEX_FILENAME)) as index_file:
+        weight_map = json.load(index_file)["weight_map"]
+
+    state_dict = {}
+    for shard in sorted(set(weight_map.values())):
+        state_dict.update(load_file(os.path.join(directory, shard), device="cpu"))
+
+    return state_dict
 
 
 class Flux2Model(BaseModel):
@@ -127,15 +142,22 @@ class Flux2Model(BaseModel):
         if os.path.exists(os.path.join(transformer_path, self.flux2_te_filename)):
             transformer_path = os.path.join(transformer_path, self.flux2_te_filename)
 
-        if not os.path.exists(transformer_path):
-            # assume it is from the hub
-            transformer_path = huggingface_hub.hf_hub_download(
-                repo_id=model_path,
-                filename=self.flux2_te_filename,
-                token=HF_TOKEN,
-            )
+        # a directory holding an index plus its shards is loaded as one state dict.
+        # The training image ships the checkpoint that way because a single 17 GB
+        # file becomes one image layer, and Docker cannot resume a layer whose pull
+        # drops - rented machines looped on retries until they were scrapped.
+        if os.path.isfile(os.path.join(transformer_path, SHARD_INDEX_FILENAME)):
+            transformer_state_dict = load_sharded_state_dict(transformer_path)
+        else:
+            if not os.path.exists(transformer_path):
+                # assume it is from the hub
+                transformer_path = huggingface_hub.hf_hub_download(
+                    repo_id=model_path,
+                    filename=self.flux2_te_filename,
+                    token=HF_TOKEN,
+                )
 
-        transformer_state_dict = load_file(transformer_path, device="cpu")
+            transformer_state_dict = load_file(transformer_path, device="cpu")
         transformer = Flux2.load_from_state_dict(
             transformer_state_dict, dtype, config=self.get_flux2_params()
         )
