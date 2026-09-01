@@ -51,5 +51,8 @@ def emit_task_completed(client_id, task_id, user_id, epoch):
     })
 
 
-def emit_training_failed(client_id, message):
-    _send(client_id, "training.failed", {"message": str(message)})
+def emit_training_failed(client_id, message, gpu_fault):
+    _send(client_id, "training.failed", {
+        "message": str(message),
+        "gpu_fault": bool(gpu_fault),
+    })
