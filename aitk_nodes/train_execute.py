@@ -20,20 +20,58 @@ HEARTBEAT_INTERVAL_SECONDS = 10
 OUTPUT_TAIL_CHARS = 6000
 
 
+GPU_FAULT_SIGNATURES = (
+    "unspecified launch failure",
+    "cudaerrorlaunchfailure",
+    "an illegal memory access",
+    "uncorrectable ecc error",
+    "ecc error",
+    "has fallen off the bus",
+    "device-side assert triggered",
+    "no cuda-capable device",
+    "cuda-capable device(s) is/are busy",
+)
+
+GPU_LIBRARY_SIGNATURES = (
+    "cublas",
+    "cudnn",
+    "cusolver",
+)
+
+
 def _classify_training_failure(error, output):
+    """Return (message, gpu_fault) for a failure raised while training.
+
+    gpu_fault marks a hardware/driver failure of the rented card, which
+    comfy-api recovers by rebooting the container instead of failing the task.
+    """
     text = str(error).strip()
     haystack = f"{text}\n{output or ''}".lower()
 
-    if "out of memory" in haystack or "cuda error" in haystack or "cublas" in haystack:
+    if any(signature in haystack for signature in GPU_FAULT_SIGNATURES):
         return (
-            "CUDA out of memory / GPU error during training "
-            f"(reduce batch size or resolution): {text}"
+            "GPU fault during training - the card stopped serving kernels mid-run. "
+            f"This is a hardware/driver failure of the rented machine, not a training setting: {text}",
+            True,
         )
 
-    if "no images found" in haystack or "no such file" in haystack or "filenotfounderror" in haystack:
-        return f"Dataset / file error during training: {text}"
+    if "out of memory" in haystack:
+        return (
+            "GPU out of memory during training "
+            f"(reduce batch size or resolution): {text}",
+            False,
+        )
 
-    return text
+    if any(signature in haystack for signature in GPU_LIBRARY_SIGNATURES):
+        return f"GPU math library error during training (cuBLAS/cuDNN): {text}", False
+
+    if "cuda error" in haystack:
+        return f"CUDA error during training: {text}", False
+
+    if "no images found" in haystack or "no such file" in haystack or "filenotfounderror" in haystack:
+        return f"Dataset / file error during training: {text}", False
+
+    return text, False
 
 
 def _load_pkg_module(rel_path):
@@ -302,7 +340,8 @@ class AIToolkitTrainExecute:
             # of waiting for the stall monitor.
             if fantasio_context:
                 output = process.full_output if process is not None else ""
-                epoch_events.emit_training_failed(client_id, _classify_training_failure(e, output))
+                message, gpu_fault = _classify_training_failure(e, output)
+                epoch_events.emit_training_failed(client_id, message, gpu_fault)
             raise
 
     def _emit_progress(self, epoch_events, client_id, progress, total_steps, completed_epochs, total_epochs):
