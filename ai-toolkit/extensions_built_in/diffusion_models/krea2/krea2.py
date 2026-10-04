@@ -13,6 +13,7 @@ Flow-matching convention matches ai-toolkit exactly (t=1 noise -> t=0 clean,
 target = noise - clean), so ``get_noise_prediction`` does no time flip / negation.
 """
 
+import json
 import math
 import os
 from typing import TYPE_CHECKING, List, Optional
@@ -102,12 +103,28 @@ QWEN_IMAGE_VAE_PATH = "Qwen/Qwen-Image"
 HF_TOKEN = os.getenv("HF_TOKEN", None)
 
 
+SHARD_INDEX_FILENAME = "model.safetensors.index.json"
+
+
+def _load_sharded_state_dict(directory: str) -> dict:
+    """Merge a sharded checkpoint (``model.safetensors.index.json`` + shards)."""
+    with open(os.path.join(directory, SHARD_INDEX_FILENAME)) as index_file:
+        weight_map = json.load(index_file)["weight_map"]
+
+    state_dict = {}
+    for shard in sorted(set(weight_map.values())):
+        state_dict.update(load_file(os.path.join(directory, shard)))
+
+    return state_dict
+
+
 def _load_mmdit_state_dict(name_or_path: str, filename: Optional[str]) -> dict:
     """Load the MMDiT weights from a local safetensors file/dir or the HF hub.
 
-    ``name_or_path`` may be: a ``.safetensors`` file, a directory containing one
-    (``filename`` or the lone ``.safetensors`` in it), or a hub repo id (the
-    file ``filename`` is downloaded, defaulting to ``model.safetensors``).
+    ``name_or_path`` may be: a ``.safetensors`` file, a directory holding either a
+    sharded checkpoint (``model.safetensors.index.json`` plus its shards) or a
+    single ``.safetensors`` (``filename`` or the lone one in it), or a hub repo id
+    (the file ``filename`` is downloaded, defaulting to ``model.safetensors``).
     """
     if name_or_path.endswith(".safetensors") and os.path.isfile(name_or_path):
         return load_file(name_or_path)
@@ -115,6 +132,8 @@ def _load_mmdit_state_dict(name_or_path: str, filename: Optional[str]) -> dict:
     if os.path.isdir(name_or_path):
         if filename is not None:
             return load_file(os.path.join(name_or_path, filename))
+        if os.path.isfile(os.path.join(name_or_path, SHARD_INDEX_FILENAME)):
+            return _load_sharded_state_dict(name_or_path)
         candidates = [f for f in os.listdir(name_or_path) if f.endswith(".safetensors")]
         if len(candidates) == 1:
             return load_file(os.path.join(name_or_path, candidates[0]))
