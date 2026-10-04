@@ -5,6 +5,7 @@ with its epoch samples to S3 and emits the comfy-api training contract events.
 """
 
 import os
+import re
 import sys
 import time
 import glob
@@ -18,6 +19,23 @@ SAMPLE_POLL_INTERVAL_SECONDS = 5
 LOOP_SLEEP_SECONDS = 0.5
 HEARTBEAT_INTERVAL_SECONDS = 10
 OUTPUT_TAIL_CHARS = 6000
+
+# Both the sample images and the checkpoints carry the step they belong to in their
+# file name, which is the only reliable way to pair them: the trainer writes the
+# checkpoint first and renders that step's samples afterwards, so "whatever samples
+# arrived since the last upload" always belongs to the previous checkpoint.
+_SAMPLE_STEP_RE = re.compile(r"__(\d+)_\d+\.[A-Za-z0-9]+$")
+_CHECKPOINT_STEP_RE = re.compile(r"_(\d+)\.safetensors$")
+
+
+def _sample_step(path):
+    match = _SAMPLE_STEP_RE.search(os.path.basename(path))
+    return int(match.group(1)) if match else None
+
+
+def _checkpoint_step(path):
+    match = _CHECKPOINT_STEP_RE.search(os.path.basename(path))
+    return int(match.group(1)) if match else None
 
 
 GPU_FAULT_SIGNATURES = (
@@ -254,7 +272,40 @@ class AIToolkitTrainExecute:
             last_sample_check = 0
             last_progress_emit = 0
             epoch_counter = 0
-            pending_samples = []
+            samples_by_step = {}
+            awaiting_upload = []
+            expected_samples = len(sample_config.get("prompts", [])) if sample_config else 0
+
+            def collect_samples():
+                for sample_path in sample_watcher.check_new_samples():
+                    samples_by_step.setdefault(_sample_step(sample_path), []).append(sample_path)
+
+            def flush_ready(force=False):
+                nonlocal last_progress_emit
+
+                while awaiting_upload:
+                    entry = awaiting_upload[0]
+                    step = entry["step"]
+                    own_samples = sorted(samples_by_step.get(step, []))
+                    complete = expected_samples > 0 and len(own_samples) >= expected_samples
+                    superseded = step is not None and any(
+                        seen is not None and seen > step for seen in samples_by_step
+                    )
+
+                    if not (force or complete or superseded):
+                        return
+
+                    awaiting_upload.pop(0)
+                    samples_by_step.pop(step, None)
+                    epoch_events.emit_message(client_id, f"Uploading epoch {entry['epoch']} checkpoint")
+                    self._handle_epoch(
+                        epoch_events, upload_epoch_artifacts, compute_adapter_metrics,
+                        fantasio_lib, fantasio_context,
+                        client_id, entry["epoch"], total_epochs, entry["path"],
+                        own_samples, process.progress,
+                    )
+                    last_progress_emit = time.time()
+                    process.progress.reset_loss_window()
 
             try:
                 while process.is_running():
@@ -279,23 +330,20 @@ class AIToolkitTrainExecute:
                     last_step = progress.step
 
                     if now - last_sample_check > SAMPLE_POLL_INTERVAL_SECONDS:
-                        pending_samples.extend(sample_watcher.check_new_samples())
+                        collect_samples()
                         last_sample_check = now
 
                     if fantasio_context:
                         for checkpoint_path in checkpoint_watcher.check_new_checkpoints():
                             epoch_counter += 1
-                            pending_samples.extend(sample_watcher.check_new_samples())
-                            epoch_events.emit_message(client_id, f"Uploading epoch {epoch_counter} checkpoint")
-                            self._handle_epoch(
-                                epoch_events, upload_epoch_artifacts, compute_adapter_metrics,
-                                fantasio_lib, fantasio_context,
-                                client_id, epoch_counter, total_epochs, checkpoint_path,
-                                pending_samples, process.progress,
-                            )
-                            pending_samples = []
-                            last_progress_emit = time.time()
-                            process.progress.reset_loss_window()
+                            awaiting_upload.append({
+                                "epoch": epoch_counter,
+                                "path": checkpoint_path,
+                                "step": _checkpoint_step(checkpoint_path),
+                            })
+
+                        collect_samples()
+                        flush_ready()
 
                     time.sleep(LOOP_SLEEP_SECONDS)
 
@@ -319,6 +367,21 @@ class AIToolkitTrainExecute:
                     f"Training failed with exit code {exit_code}. Full log: {log_path}\n"
                     f"--- output tail ---\n{tail}"
                 )
+
+            # The last checkpoint and its samples land after the loop has already
+            # left, so drain both once the trainer is done: without this the final
+            # epoch never reaches S3.
+            if fantasio_context:
+                for checkpoint_path in checkpoint_watcher.check_new_checkpoints():
+                    epoch_counter += 1
+                    awaiting_upload.append({
+                        "epoch": epoch_counter,
+                        "path": checkpoint_path,
+                        "step": _checkpoint_step(checkpoint_path),
+                    })
+
+                collect_samples()
+                flush_ready(force=True)
 
             # Find the final LoRA checkpoint
             lora_path = self._find_latest_checkpoint(output_base, job_name)

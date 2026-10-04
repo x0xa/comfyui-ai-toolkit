@@ -17,6 +17,9 @@ class AIToolkitTrainConfig:
         "lion8bit",
         "came",
         "dadaptation",
+        "automagic",
+        "automagic2",
+        "automagic3",
     ]
 
     LR_SCHEDULERS = [
@@ -121,6 +124,17 @@ class AIToolkitTrainConfig:
                     "step": 0.01,
                     "tooltip": "Loss multiplier for regularization images (1.0 = full, 0.15-0.4 typical when prior-preservation should not dominate likeness)",
                 }),
+                "do_differential_guidance": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Push the loss target away from the model's own prediction: target = pred + scale * (target - pred)",
+                }),
+                "differential_guidance_scale": ("FLOAT", {
+                    "default": 3.0,
+                    "min": 1.0,
+                    "max": 10.0,
+                    "step": 0.5,
+                    "tooltip": "Amplification of the training signal when differential guidance is on",
+                }),
                 "skip_first_sample": ("BOOLEAN", {
                     "default": False,
                     "tooltip": "Skip generating sample before training starts",
@@ -188,6 +202,8 @@ class AIToolkitTrainConfig:
         noise_offset: float = 0.0,
         min_snr_gamma: float = 0.0,
         reg_weight: float = 1.0,
+        do_differential_guidance: bool = False,
+        differential_guidance_scale: float = 3.0,
         skip_first_sample: bool = False,
         disable_sampling: bool = False,
         linear_timesteps: bool = False,
@@ -246,6 +262,10 @@ class AIToolkitTrainConfig:
                     config["optimizer_params"] = params
             except json.JSONDecodeError:
                 pass
+
+        if do_differential_guidance:
+            config["do_differential_guidance"] = True
+            config["differential_guidance_scale"] = differential_guidance_scale
 
         if diff_output_preservation:
             config["diff_output_preservation"] = True
