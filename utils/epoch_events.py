@@ -20,11 +20,10 @@ def emit_message(client_id, message):
     _send(client_id, "progress", {"message": message})
 
 
-def emit_epoch_uploaded(client_id, task_id, user_id, epoch, avg_loss, step, lora_url, sample_urls, metrics=None):
+def emit_epoch_uploaded(client_id, task_id, epoch, avg_loss, step, lora_url, sample_urls, metrics=None):
     metrics = metrics or {}
     _send(client_id, "training.epoch.uploaded", {
         "task_id": int(task_id),
-        "user_id": int(user_id),
         "epoch": int(epoch),
         "avg_loss": float(avg_loss),
         "step": int(step),
@@ -37,14 +36,13 @@ def emit_epoch_uploaded(client_id, task_id, user_id, epoch, avg_loss, step, lora
     })
 
 
-def emit_task_completed(client_id, task_id, user_id, epoch):
+def emit_task_completed(client_id, task_id, epoch):
     selection_expires_at = (
         datetime.now(timezone.utc) + timedelta(days=SELECTION_WINDOW_DAYS)
     ).isoformat().replace("+00:00", "Z")
 
     _send(client_id, "training.task.completed", {
         "task_id": int(task_id),
-        "user_id": int(user_id),
         "status": "TrainingCompleted",
         "epoch_number": int(epoch),
         "selection_expires_at": selection_expires_at,

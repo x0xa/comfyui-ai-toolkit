@@ -16,7 +16,6 @@ class FantasioTrainingContext:
         return {
             "required": {
                 "task_id": ("INT", {"default": 0, "min": 0}),
-                "user_id": ("INT", {"default": 0, "min": 0}),
                 "trigger_word": ("STRING", {"default": ""}),
                 "total_epochs": ("INT", {"default": 0, "min": 0}),
                 "s3_endpoint": ("STRING", {"default": ""}),
@@ -31,12 +30,11 @@ class FantasioTrainingContext:
             },
         }
 
-    def build(self, task_id, user_id, trigger_word, total_epochs,
+    def build(self, task_id, trigger_word, total_epochs,
               s3_endpoint, s3_access_key, s3_secret_key, s3_bucket,
               s3_public_url, s3_key_prefix, client_id=""):
         context = {
             "task_id": int(task_id),
-            "user_id": int(user_id),
             "trigger_word": trigger_word,
             "total_epochs": int(total_epochs),
             "s3_endpoint": s3_endpoint,

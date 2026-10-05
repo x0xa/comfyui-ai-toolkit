@@ -440,12 +440,12 @@ class AIToolkitTrainExecute:
                 fantasio_lib, context, epoch, checkpoint_path, sample_paths
             )
             epoch_events.emit_epoch_uploaded(
-                client_id, context["task_id"], context["user_id"], epoch,
+                client_id, context["task_id"], epoch,
                 progress.avg_loss, progress.step, lora_url, sample_urls, metrics,
             )
             if total_epochs and epoch >= total_epochs:
                 epoch_events.emit_task_completed(
-                    client_id, context["task_id"], context["user_id"], epoch
+                    client_id, context["task_id"], epoch
                 )
         except Exception as e:
             epoch_events.emit_message(
