@@ -33,9 +33,11 @@ def _sample_step(path):
     return int(match.group(1)) if match else None
 
 
-def _checkpoint_step(path):
+# The trainer's final save, made after the loop, carries no step in its name, while
+# that save's samples are named with the last step, which equals the configured steps.
+def _checkpoint_step(path, final_step):
     match = _CHECKPOINT_STEP_RE.search(os.path.basename(path))
-    return int(match.group(1)) if match else None
+    return int(match.group(1)) if match else final_step
 
 
 GPU_FAULT_SIGNATURES = (
@@ -339,7 +341,7 @@ class AIToolkitTrainExecute:
                             awaiting_upload.append({
                                 "epoch": epoch_counter,
                                 "path": checkpoint_path,
-                                "step": _checkpoint_step(checkpoint_path),
+                                "step": _checkpoint_step(checkpoint_path, total_steps),
                             })
 
                         collect_samples()
@@ -377,7 +379,7 @@ class AIToolkitTrainExecute:
                     awaiting_upload.append({
                         "epoch": epoch_counter,
                         "path": checkpoint_path,
-                        "step": _checkpoint_step(checkpoint_path),
+                        "step": _checkpoint_step(checkpoint_path, total_steps),
                     })
 
                 collect_samples()
