@@ -11,6 +11,7 @@ import time
 import glob
 import yaml
 import importlib.util
+from urllib.parse import urlparse
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AITK_DIR = os.path.join(_PKG_ROOT, "ai-toolkit")
@@ -19,6 +20,11 @@ SAMPLE_POLL_INTERVAL_SECONDS = 5
 LOOP_SLEEP_SECONDS = 0.5
 HEARTBEAT_INTERVAL_SECONDS = 10
 OUTPUT_TAIL_CHARS = 6000
+EPOCH_UPLOAD_DEADLINE_SECONDS = 900
+EPOCH_UPLOAD_RETRY_DELAY_SECONDS = 10
+RESUME_DOWNLOAD_TIMEOUT_SECONDS = 300
+RESUMED_OPTIMIZER_FILENAME = "optimizer.pt"
+EGRESS_FAILURE_EXCEPTION_NAME = "InstanceEgressUnavailable"
 
 # Both the sample images and the checkpoints carry the step they belong to in their
 # file name, which is the only reliable way to pair them: the trainer writes the
@@ -38,6 +44,24 @@ def _sample_step(path):
 def _checkpoint_step(path, final_step):
     match = _CHECKPOINT_STEP_RE.search(os.path.basename(path))
     return int(match.group(1)) if match else final_step
+
+
+# The trainer copies its optimizer state next to every step-named checkpoint, so the
+# state of an epoch is found by the checkpoint's step. The final save has none.
+def _epoch_state_path(checkpoint_path, step):
+    state_path = os.path.join(os.path.dirname(checkpoint_path), f"optimizer_{str(step).zfill(9)}.pt")
+    return state_path if os.path.isfile(state_path) else None
+
+
+class EpochUploadDeadlineExceeded(RuntimeError):
+    pass
+
+
+# Raised in place of the original error when the failure belongs to the machine, so
+# the exception type in ComfyUI's execution_error and history carries the same verdict
+# as the training.failed event.
+class TrainingMachineFault(RuntimeError):
+    pass
 
 
 GPU_FAULT_SIGNATURES = (
@@ -60,13 +84,20 @@ GPU_LIBRARY_SIGNATURES = (
 
 
 def _classify_training_failure(error, output):
-    """Return (message, gpu_fault) for a failure raised while training.
+    """Return (message, machine_fault) for a failure raised while training.
 
-    gpu_fault marks a hardware/driver failure of the rented card, which
-    comfy-api recovers by rebooting the container instead of failing the task.
+    machine_fault marks a failure of the rented machine itself (card, driver or
+    network), which comfy-api recovers by moving the task to another machine and
+    continuing from the last uploaded epoch instead of failing the task.
     """
     text = str(error).strip()
     haystack = f"{text}\n{output or ''}".lower()
+
+    if isinstance(error, EpochUploadDeadlineExceeded):
+        return f"Machine could not upload an epoch checkpoint: {text}", True
+
+    if type(error).__name__ == EGRESS_FAILURE_EXCEPTION_NAME:
+        return f"Machine lost its network egress: {text}", True
 
     if any(signature in haystack for signature in GPU_FAULT_SIGNATURES):
         return (
@@ -178,6 +209,7 @@ class AIToolkitTrainExecute:
         try:
             import comfy.model_management
             import comfy.utils
+            import folder_paths
             has_comfy = True
         except ImportError:
             has_comfy = False
@@ -188,6 +220,7 @@ class AIToolkitTrainExecute:
         SampleWatcher, load_images_as_tensor = _sw.SampleWatcher, _sw.load_images_as_tensor
         CheckpointWatcher = _load_pkg_module("utils.checkpoint_watcher").CheckpointWatcher
         epoch_events = _load_pkg_module("utils.epoch_events")
+        EpochLedger = _load_pkg_module("utils.epoch_ledger").EpochLedger
         upload_epoch_artifacts = _load_pkg_module("utils.checkpoint_upload").upload_epoch_artifacts
         compute_adapter_metrics = _load_pkg_module("utils.adapter_metrics").compute_adapter_metrics
 
@@ -256,9 +289,19 @@ class AIToolkitTrainExecute:
             sample_watcher = SampleWatcher(output_base, job_name)
             checkpoint_watcher = CheckpointWatcher(output_base, job_name)
 
+            save_every = save_config["save_every"]
+            completed_epochs = 0
             fantasio_lib = None
+            ledger = None
             if fantasio_context:
                 fantasio_lib = _load_pkg_module("utils.fantasio_lib").load_fantasio_lib()
+                ledger = EpochLedger(folder_paths.get_output_directory(), fantasio_context["task_id"])
+
+                if fantasio_context["resume_checkpoint_url"]:
+                    completed_epochs = self._restore_training_state(
+                        fantasio_lib, fantasio_context, os.path.join(output_base, job_name), save_every, client_id
+                    )
+                    checkpoint_watcher.check_new_checkpoints()
 
             # Setup progress bar
             total_steps = train_config.get("steps", 2000)
@@ -273,7 +316,6 @@ class AIToolkitTrainExecute:
             last_step = 0
             last_sample_check = 0
             last_progress_emit = 0
-            epoch_counter = 0
             samples_by_step = {}
             awaiting_upload = []
             expected_samples = len(sample_config.get("prompts", [])) if sample_config else 0
@@ -282,8 +324,17 @@ class AIToolkitTrainExecute:
                 for sample_path in sample_watcher.check_new_samples():
                     samples_by_step.setdefault(_sample_step(sample_path), []).append(sample_path)
 
+            def queue_new_checkpoints():
+                for checkpoint_path in checkpoint_watcher.check_new_checkpoints():
+                    step = _checkpoint_step(checkpoint_path, total_steps)
+                    awaiting_upload.append({
+                        "epoch": step // save_every,
+                        "path": checkpoint_path,
+                        "step": step,
+                    })
+
             def flush_ready(force=False):
-                nonlocal last_progress_emit
+                nonlocal last_progress_emit, completed_epochs
 
                 while awaiting_upload:
                     entry = awaiting_upload[0]
@@ -302,10 +353,10 @@ class AIToolkitTrainExecute:
                     epoch_events.emit_message(client_id, f"Uploading epoch {entry['epoch']} checkpoint")
                     self._handle_epoch(
                         epoch_events, upload_epoch_artifacts, compute_adapter_metrics,
-                        fantasio_lib, fantasio_context,
-                        client_id, entry["epoch"], total_epochs, entry["path"],
-                        own_samples, process.progress,
+                        fantasio_lib, fantasio_context, ledger,
+                        client_id, entry, total_epochs, own_samples, process.progress,
                     )
+                    completed_epochs = entry["epoch"]
                     last_progress_emit = time.time()
                     process.progress.reset_loss_window()
 
@@ -325,7 +376,7 @@ class AIToolkitTrainExecute:
                     # validation, saving) never look like a stalled instance.
                     if fantasio_context and (step_changed or now - last_progress_emit >= HEARTBEAT_INTERVAL_SECONDS):
                         self._emit_progress(
-                            epoch_events, client_id, progress, total_steps, epoch_counter, total_epochs
+                            epoch_events, client_id, progress, total_steps, completed_epochs, total_epochs
                         )
                         last_progress_emit = now
 
@@ -336,14 +387,7 @@ class AIToolkitTrainExecute:
                         last_sample_check = now
 
                     if fantasio_context:
-                        for checkpoint_path in checkpoint_watcher.check_new_checkpoints():
-                            epoch_counter += 1
-                            awaiting_upload.append({
-                                "epoch": epoch_counter,
-                                "path": checkpoint_path,
-                                "step": _checkpoint_step(checkpoint_path, total_steps),
-                            })
-
+                        queue_new_checkpoints()
                         collect_samples()
                         flush_ready()
 
@@ -374,14 +418,7 @@ class AIToolkitTrainExecute:
             # left, so drain both once the trainer is done: without this the final
             # epoch never reaches S3.
             if fantasio_context:
-                for checkpoint_path in checkpoint_watcher.check_new_checkpoints():
-                    epoch_counter += 1
-                    awaiting_upload.append({
-                        "epoch": epoch_counter,
-                        "path": checkpoint_path,
-                        "step": _checkpoint_step(checkpoint_path, total_steps),
-                    })
-
+                queue_new_checkpoints()
                 collect_samples()
                 flush_ready(force=True)
 
@@ -405,8 +442,10 @@ class AIToolkitTrainExecute:
             # of waiting for the stall monitor.
             if fantasio_context:
                 output = process.full_output if process is not None else ""
-                message, gpu_fault = _classify_training_failure(e, output)
-                epoch_events.emit_training_failed(client_id, message, gpu_fault)
+                message, machine_fault = _classify_training_failure(e, output)
+                epoch_events.emit_training_failed(client_id, message, machine_fault)
+                if machine_fault:
+                    raise TrainingMachineFault(message) from e
             raise
 
     def _emit_progress(self, epoch_events, client_id, progress, total_steps, completed_epochs, total_epochs):
@@ -426,34 +465,83 @@ class AIToolkitTrainExecute:
         epoch_events.emit_progress(client_id, progress_data)
 
     def _handle_epoch(self, epoch_events, upload_epoch_artifacts, compute_adapter_metrics,
-                      fantasio_lib, context,
-                      client_id, epoch, total_epochs, checkpoint_path, sample_paths, progress):
-        try:
-            metrics = None
-            try:
-                metrics = compute_adapter_metrics(checkpoint_path)
-            except Exception as e:
-                epoch_events.emit_message(
-                    client_id,
-                    f"Epoch {epoch} adapter metrics failed ({type(e).__name__}): {e}",
-                )
+                      fantasio_lib, context, ledger,
+                      client_id, entry, total_epochs, sample_paths, progress):
+        epoch = entry["epoch"]
+        step = entry["step"]
+        checkpoint_path = entry["path"]
 
-            lora_url, sample_urls = upload_epoch_artifacts(
-                fantasio_lib, context, epoch, checkpoint_path, sample_paths
-            )
-            epoch_events.emit_epoch_uploaded(
-                client_id, context["task_id"], epoch,
-                progress.avg_loss, progress.step, lora_url, sample_urls, metrics,
-            )
-            if total_epochs and epoch >= total_epochs:
-                epoch_events.emit_task_completed(
-                    client_id, context["task_id"], epoch
-                )
+        metrics = None
+        try:
+            metrics = compute_adapter_metrics(checkpoint_path)
         except Exception as e:
             epoch_events.emit_message(
                 client_id,
-                f"Epoch {epoch} checkpoint upload failed ({type(e).__name__}): {e}",
+                f"Epoch {epoch} adapter metrics failed ({type(e).__name__}): {e}",
             )
+
+        state_path = _epoch_state_path(checkpoint_path, step)
+
+        with fantasio_lib.GpuActivityNotifier(f"Uploading epoch {epoch} checkpoint", client_id):
+            lora_url, sample_urls, state_url = self._upload_epoch_until_deadline(
+                epoch_events, upload_epoch_artifacts, fantasio_lib, context,
+                client_id, epoch, checkpoint_path, sample_paths, state_path,
+            )
+
+        payload = epoch_events.build_epoch_payload(
+            context["task_id"], epoch, progress.avg_loss, step, lora_url, sample_urls, state_url, metrics,
+        )
+        ledger.record(payload)
+        epoch_events.emit_epoch_uploaded(client_id, payload)
+
+        if state_path is not None:
+            os.remove(state_path)
+
+        if total_epochs and epoch >= total_epochs:
+            epoch_events.emit_task_completed(client_id, context["task_id"], epoch)
+
+    # A failed upload is retried while training goes on; only a machine that keeps
+    # failing past the deadline is reported, so comfy-api moves the task elsewhere.
+    def _upload_epoch_until_deadline(self, epoch_events, upload_epoch_artifacts, fantasio_lib, context,
+                                     client_id, epoch, checkpoint_path, sample_paths, state_path):
+        deadline = time.monotonic() + EPOCH_UPLOAD_DEADLINE_SECONDS
+
+        while True:
+            try:
+                return upload_epoch_artifacts(
+                    fantasio_lib, context, epoch, checkpoint_path, sample_paths, state_path
+                )
+            except Exception as e:
+                if time.monotonic() >= deadline:
+                    raise EpochUploadDeadlineExceeded(
+                        f"epoch {epoch} not uploaded within {EPOCH_UPLOAD_DEADLINE_SECONDS}s "
+                        f"({type(e).__name__}): {e}"
+                    ) from e
+
+                epoch_events.emit_message(
+                    client_id,
+                    f"Epoch {epoch} checkpoint upload failed, retrying ({type(e).__name__}): {e}",
+                )
+                time.sleep(EPOCH_UPLOAD_RETRY_DELAY_SECONDS)
+
+    def _restore_training_state(self, fantasio_lib, context, job_dir, save_every, client_id):
+        checkpoint_url = context["resume_checkpoint_url"]
+        checkpoint_path = os.path.join(job_dir, os.path.basename(urlparse(checkpoint_url).path))
+        os.makedirs(job_dir, exist_ok=True)
+
+        with fantasio_lib.GpuActivityNotifier("Restoring training state", client_id):
+            fantasio_lib.download_to_file(
+                checkpoint_url, checkpoint_path, timeout_seconds=RESUME_DOWNLOAD_TIMEOUT_SECONDS
+            )
+
+            if context["resume_state_url"]:
+                fantasio_lib.download_to_file(
+                    context["resume_state_url"],
+                    os.path.join(job_dir, RESUMED_OPTIMIZER_FILENAME),
+                    timeout_seconds=RESUME_DOWNLOAD_TIMEOUT_SECONDS,
+                )
+
+        return _checkpoint_step(checkpoint_path, None) // save_every
 
     def _find_latest_checkpoint(self, output_base: str, job_name: str) -> str:
         """Find the most recent checkpoint file in the output directory."""

@@ -25,6 +25,10 @@ class FantasioTrainingContext:
                 "s3_public_url": ("STRING", {"default": ""}),
                 "s3_key_prefix": ("STRING", {"default": ""}),
             },
+            "optional": {
+                "resume_checkpoint_url": ("STRING", {"default": ""}),
+                "resume_state_url": ("STRING", {"default": ""}),
+            },
             "hidden": {
                 "client_id": ("STRING",),
             },
@@ -32,7 +36,7 @@ class FantasioTrainingContext:
 
     def build(self, task_id, trigger_word, total_epochs,
               s3_endpoint, s3_access_key, s3_secret_key, s3_bucket,
-              s3_public_url, s3_key_prefix, client_id=""):
+              s3_public_url, s3_key_prefix, resume_checkpoint_url="", resume_state_url="", client_id=""):
         context = {
             "task_id": int(task_id),
             "trigger_word": trigger_word,
@@ -43,6 +47,8 @@ class FantasioTrainingContext:
             "s3_bucket": s3_bucket,
             "s3_public_url": s3_public_url,
             "s3_key_prefix": s3_key_prefix,
+            "resume_checkpoint_url": resume_checkpoint_url,
+            "resume_state_url": resume_state_url,
             "client_id": client_id,
         }
 

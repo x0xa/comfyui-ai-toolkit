@@ -9,7 +9,7 @@ from PIL import Image
 SAMPLE_WEBP_QUALITY = 90
 
 
-def upload_epoch_artifacts(fantasio_lib, context, epoch, checkpoint_path, sample_paths):
+def upload_epoch_artifacts(fantasio_lib, context, epoch, checkpoint_path, sample_paths, state_path):
     s3 = fantasio_lib.create_s3_client(
         context["s3_endpoint"],
         context["s3_access_key"],
@@ -27,7 +27,19 @@ def upload_epoch_artifacts(fantasio_lib, context, epoch, checkpoint_path, sample
 
     sample_urls = upload_epoch_samples(fantasio_lib, s3, bucket, public_url, prefix, epoch, sample_paths)
 
-    return lora_url, sample_urls
+    state_url = upload_epoch_state(fantasio_lib, s3, bucket, public_url, prefix, state_path)
+
+    return lora_url, sample_urls, state_url
+
+
+def upload_epoch_state(fantasio_lib, s3, bucket, public_url, prefix, state_path):
+    if state_path is None:
+        return None
+
+    state_key = f"{prefix}/state/{os.path.basename(state_path)}"
+    fantasio_lib.upload_file_to_s3(s3, state_path, bucket, state_key)
+
+    return fantasio_lib.normalize_s3_public_url(public_url, state_key)
 
 
 def upload_epoch_samples(fantasio_lib, s3, bucket, public_url, prefix, epoch, sample_paths):

@@ -709,6 +709,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     state_dict = self.optimizer.state_dict()
                 torch.save(state_dict, file_path)
                 print_acc(f"Saved optimizer to {file_path}")
+                if step_num:
+                    shutil.copyfile(file_path, os.path.join(self.save_root, f'optimizer{step_num}.pt'))
             except Exception as e:
                 print_acc(e)
                 print_acc("Could not save optimizer")

@@ -20,20 +20,25 @@ def emit_message(client_id, message):
     _send(client_id, "progress", {"message": message})
 
 
-def emit_epoch_uploaded(client_id, task_id, epoch, avg_loss, step, lora_url, sample_urls, metrics=None):
+def build_epoch_payload(task_id, epoch, avg_loss, step, lora_url, sample_urls, state_url, metrics=None):
     metrics = metrics or {}
-    _send(client_id, "training.epoch.uploaded", {
+    return {
         "task_id": int(task_id),
         "epoch": int(epoch),
         "avg_loss": float(avg_loss),
         "step": int(step),
         "lora_url": lora_url,
+        "state_url": state_url,
         "sample_images": [{"url": url} for url in sample_urls],
         "delta_norm": metrics.get("delta_norm"),
         "max_weight": metrics.get("max_weight"),
         "effective_scale": metrics.get("effective_scale"),
         "param_count": metrics.get("param_count"),
-    })
+    }
+
+
+def emit_epoch_uploaded(client_id, payload):
+    _send(client_id, "training.epoch.uploaded", payload)
 
 
 def emit_task_completed(client_id, task_id, epoch):
@@ -49,8 +54,8 @@ def emit_task_completed(client_id, task_id, epoch):
     })
 
 
-def emit_training_failed(client_id, message, gpu_fault):
+def emit_training_failed(client_id, message, machine_fault):
     _send(client_id, "training.failed", {
         "message": str(message),
-        "gpu_fault": bool(gpu_fault),
+        "machine_fault": bool(machine_fault),
     })
